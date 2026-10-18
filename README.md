@@ -7,6 +7,20 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
+更新代码并重启项目：
+
+```bash
+./restart.sh
+```
+
+脚本先执行 `git pull --ff-only`，成功后自动选择 `docker compose` 或 `docker-compose`，
+检查配置、重新构建并重建容器，保留数据库数据卷。任一步失败立即停止。
+需要使用额外的生产 Compose 配置时，可沿用 Compose 的环境变量：
+
+```bash
+COMPOSE_FILE=docker-compose.yml:compose.production.yml ./restart.sh
+```
+
 项目和容器名称前缀由 `SUB_ADDS_NAME` 控制，默认值为 `fastaidesign`。
 默认端口由 `.env` 控制：前端 `SUB_ADDS_FRONTEND_PORT=4445`，后端
 `SUB_ADDS_BACKEND_PORT=4455`。统一 Nginx 的参考规则见 `nginx.conf.example`：
