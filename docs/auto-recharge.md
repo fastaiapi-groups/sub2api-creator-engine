@@ -101,7 +101,7 @@ ORDER BY l.id DESC;
 bash backend/scripts/test-recharge.sh
 ```
 
-如果希望使用本机开发工具检查，后端需要 Go 1.22+，前端需要 Node.js 和 npm。以下两组命令分别从项目根目录执行。
+如果希望使用本机开发工具检查，后端需要 Go 1.22+，前端需要 Node.js 22.12+ 和 npm 11.16.0（与 Docker 构建保持一致）。以下两组命令分别从项目根目录执行。
 
 后端：
 
@@ -115,6 +115,7 @@ go vet ./...
 
 ```bash
 cd frontend
+npm install --global npm@11.16.0
 npm ci
 npm run test:recharge
 npm run build

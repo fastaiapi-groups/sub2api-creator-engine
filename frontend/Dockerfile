@@ -1,7 +1,7 @@
 FROM node:22-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json vite.config.ts index.html ./
-RUN npm ci
+RUN npm install --global npm@11.16.0 && npm ci
 COPY src ./src
 RUN npm run build
 FROM nginx:alpine
