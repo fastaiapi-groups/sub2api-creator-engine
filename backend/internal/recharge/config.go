@@ -39,7 +39,7 @@ func LoadConfig() (Config, error) {
 		return c, fmt.Errorf("invalid RECHARGE_PACKAGES: %w", err)
 	}
 	if len(c.Packages) == 0 {
-		for _, n := range []int64{5, 10, 30, 50, 100, 300, 500, 1000} {
+		for _, n := range []int64{1, 5, 10, 30, 50, 100, 300, 500} {
 			s := strconv.FormatInt(n, 10)
 			c.Packages = append(c.Packages, Package{s, s + " 刀额度", n * 100, s})
 		}
