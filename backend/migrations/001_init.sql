@@ -1,0 +1,8 @@
+CREATE TABLE IF NOT EXISTS chat_image_conversations (id BIGSERIAL PRIMARY KEY,user_id BIGINT NOT NULL,title VARCHAR(200) NOT NULL DEFAULT '新对话',created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+CREATE INDEX IF NOT EXISTS idx_chat_image_conversations_user_updated ON chat_image_conversations(user_id,updated_at DESC,id DESC);
+CREATE TABLE IF NOT EXISTS chat_image_messages (id BIGSERIAL PRIMARY KEY,conversation_id BIGINT NOT NULL REFERENCES chat_image_conversations(id) ON DELETE CASCADE,client_id VARCHAR(64) NOT NULL,role VARCHAR(16) NOT NULL CHECK(role IN ('user','assistant')),kind VARCHAR(16) NOT NULL CHECK(kind IN ('text','images','files','error')),content TEXT NOT NULL DEFAULT '',model VARCHAR(128) NOT NULL DEFAULT '',created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),UNIQUE(conversation_id,client_id));
+CREATE INDEX IF NOT EXISTS idx_chat_image_messages_conversation_created ON chat_image_messages(conversation_id,created_at,id);
+CREATE TABLE IF NOT EXISTS chat_image_resources (id BIGSERIAL PRIMARY KEY,message_id BIGINT NOT NULL REFERENCES chat_image_messages(id) ON DELETE CASCADE,resource_type VARCHAR(16) NOT NULL CHECK(resource_type IN ('image','file')),resource_path TEXT NOT NULL,display_name VARCHAR(255) NOT NULL DEFAULT '',mime_type VARCHAR(128) NOT NULL DEFAULT '',size_bytes BIGINT,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+CREATE INDEX IF NOT EXISTS idx_chat_image_resources_message ON chat_image_resources(message_id,id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_image_resources_message_path ON chat_image_resources(message_id,md5(resource_path));
+CREATE INDEX IF NOT EXISTS idx_chat_image_resources_gallery_created ON chat_image_resources(created_at DESC,id DESC) WHERE resource_type='image';

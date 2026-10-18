@@ -1,0 +1,1 @@
+{"name":"sub-adds-frontend","private":true,"type":"module","scripts":{"build":"vite build","dev":"vite"},"dependencies":{"@vitejs/plugin-vue":"^5.2.3","axios":"^1.7.0","file-saver":"^2.0.5","vite":"^5.4.0","typescript":"^5.6.0","vue":"^3.4.0"},"devDependencies":{"@types/file-saver":"^2.0.7"}}

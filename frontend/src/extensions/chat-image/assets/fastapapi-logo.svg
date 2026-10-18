@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none">
+  <title>FastAiApi</title>
+  <rect width="64" height="64" rx="8" fill="#111827"/>
+  <path d="M16 48 32 15 48 48M23 35h18" stroke="#2DD4BF" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="m16 48 16-7 16 7M32 15v10" stroke="#F8FAFC" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="32" cy="15" r="4" fill="#F8FAFC"/>
+  <circle cx="23" cy="35" r="4" fill="#F8FAFC"/>
+  <circle cx="41" cy="35" r="4" fill="#F8FAFC"/>
+  <circle cx="32" cy="41" r="3" fill="#2DD4BF"/>
+  <circle cx="16" cy="48" r="4" fill="#2DD4BF"/>
+  <circle cx="48" cy="48" r="4" fill="#2DD4BF"/>
+</svg>
