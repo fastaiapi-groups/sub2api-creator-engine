@@ -1,174 +1,501 @@
-# sub-adds
+# Sub2API Creator Engine
 
-独立的绘画/聊天及自动充值扩展服务。绘画数据使用本项目独立的 PostgreSQL 与 Redis；自动充值另外连接官方 Sub2API 的数据库和 Redis。认证和模型请求通过 `FASTAIAPI_BASE_URL` 调用主项目，浏览器携带的 Bearer token 会由本服务转发。
+为官方 Sub2API 提供独立的绘画、聊天和自动充值扩展。可配合官方 Docker 镜像使用，无需修改官方 Sub2API 源码。
+
+**交流与使用帮助：QQ 群 48878665。**
+
+第一次部署，按「1 → 2 → 3」操作即可。需要自动充值时，再继续看第 4 节。
+
+## 目录
+
+- [1. 部署前准备](#1-部署前准备)
+- [2. 首次启动](#2-首次启动)
+- [3. 接入主站域名并登录使用](#3-接入主站域名并登录使用)
+- [4. 可选：开启自动充值](#4-可选开启自动充值)
+- [5. 更新代码与重启](#5-更新代码与重启)
+- [6. 日常维护与备份](#6-日常维护与备份)
+- [7. 常见问题](#7-常见问题)
+- [8. 配置项速查](#8-配置项速查)
+- [9. 联系方式](#9-联系方式)
+
+## 1. 部署前准备
+
+请准备：
+
+| 项目 | 说明 |
+| --- | --- |
+| 一台可运行 Docker 的服务器 | 推荐与现有 Sub2API 部署在同一台服务器，方便接入 |
+| 已正常运行的官方 Sub2API | 需要它的站点地址和可正常登录的账号 |
+| Git、Docker、Docker Compose | 用于下载代码和启动服务 |
+| 主站域名和反向代理配置权限 | 正式使用时，将扩展接到原 Sub2API 域名下 |
+| 支付商户、官方数据库和 Redis 连接信息 | 仅在开启自动充值时需要 |
+
+**服务器上不需要单独安装 Go、Node.js、PostgreSQL 或 Redis。** Docker 会构建前后端，并启动绘画功能需要的独立数据库和 Redis。
+
+先在服务器终端确认工具可用：
+
+```bash
+git --version
+docker --version
+docker compose version
+```
+
+以上命令应输出版本信息。如果某一条提示 `command not found`，请先安装对应工具。若 Docker 提示无法连接守护进程，请先启动 Docker 服务，并确保当前账号有运行 Docker 的权限。
+
+本指南统一使用 `docker compose`。如果你的服务器安装的是旧版 `docker-compose`，手动运行命令时请替换命令名称；`restart.sh` 会自动兼容两种写法。
+
+## 2. 首次启动
+
+### 第一步：下载代码并进入项目目录
+
+```bash
+git clone https://github.com/fastaiapi-groups/sub2api-creator-engine.git
+cd sub2api-creator-engine
+```
+
+如果你已经下载过项目，直接进入已有目录即可，不需要再克隆一次。
+
+后面的启动、日志和维护命令，都在这个目录里执行。目录内应能看到 `docker-compose.yml`、`restart.sh` 和 `.env.example`。
+
+### 第二步：创建配置文件
 
 ```bash
 cp .env.example .env
+nano .env
+```
+
+已有 `.env` 时，直接编辑它，**不要重新复制覆盖原来的配置**。
+
+第一次使用，重点修改以下两项：
+
+```dotenv
+# 填写你自己的官方 Sub2API 地址，不要在末尾加 /api 或 /api/v1
+FASTAIAPI_BASE_URL=https://你的Sub2API主站域名
+
+# 本扩展独立数据库的密码，请替换默认的 change-me
+POSTGRES_PASSWORD=替换为你自己设置的长密码
+```
+
+本扩展数据库密码建议使用较长的英文字母和数字组合，避免 `@`、`#`、`:`、`/` 等符号影响连接地址解析。
+
+暂时不用充值功能时，保持：
+
+```dotenv
+RECHARGE_ENABLED=false
+```
+
+其他配置先用默认值即可：
+
+```dotenv
+SUB_ADDS_NAME=fastaidesign
+SUB_ADDS_FRONTEND_PORT=4445
+SUB_ADDS_BACKEND_PORT=4455
+POSTGRES_DB=sub_adds
+POSTGRES_USER=sub_adds
+```
+
+使用 `nano` 编辑时：按 `Ctrl + O`，再按回车保存，最后按 `Ctrl + X` 退出。
+
+`.env` 保存真实密码和支付密钥，仅留在部署服务器上；`.env.example` 是可以提交到仓库的配置模板。
+
+### 第三步：检查配置并启动
+
+```bash
+docker compose config --quiet
 docker compose up -d --build
 ```
 
-更新代码并重启项目：
+第一条命令没有输出，通常表示配置检查通过。第二条命令第一次执行会下载镜像、安装构建依赖，耗时取决于服务器网络。
+
+完成后查看容器状态：
+
+```bash
+docker compose ps
+```
+
+应能看到 `postgres`、`redis`、`api`、`ui` 四个服务处于运行状态。若某个服务退出或持续重启，请查看它的日志：
+
+```bash
+docker compose logs --tail=100 api
+docker compose logs --tail=100 ui
+docker compose logs --tail=100 postgres
+```
+
+也可以在服务器上检查后端健康状态：
+
+```bash
+curl http://127.0.0.1:4455/health
+```
+
+正常响应中应包含 `"status":"ok"`。这个接口检查的是本扩展的数据库连通性，**不代表支付网关和官方数据库已经联调成功**。
+
+### 第四步：确认页面可以打开
+
+默认页面地址：
+
+```text
+http://服务器IP:4445/fastaiui/
+```
+
+IP 加端口的地址适合检查页面能否打开。**正式登录使用，请继续配置下一节的主站同域访问**：浏览器不会把另一个域名或端口下的登录信息自动带到这里。
+
+## 3. 接入主站域名并登录使用
+
+假设你的官方 Sub2API 地址是：
+
+```text
+https://api.example.com
+```
+
+配置完成后，用户通过下面的地址访问扩展：
+
+| 页面 | 示例地址 |
+| --- | --- |
+| 官方 Sub2API 主站 | `https://api.example.com` |
+| 绘画与聊天 | `https://api.example.com/fastaiui/` |
+| 自动充值 | `https://api.example.com/fastaiui/recharge` |
+
+### 配置 Nginx 反向代理
+
+打开**现有 Sub2API 主站对应的 Nginx 配置**，把 [nginx.conf.example](nginx.conf.example) 中的 `location` 规则加入该域名的 `server { ... }` 内。
+
+保留主站原来的配置，新增以下两组路径转发：
+
+| 路径 | 默认转发地址 | 作用 |
+| --- | --- | --- |
+| `/fastaiui/` | `http://127.0.0.1:4445` | 扩展前端页面 |
+| `/fastaiapi/` | `http://127.0.0.1:4455/` | 扩展后端接口，末尾斜杠用于移除路径前缀 |
+
+不要把示例文件直接覆盖成主站的完整配置。若原配置已有同名路径，先合并规则，避免重复。
+
+如果 Nginx 直接运行在这台服务器上，修改后执行：
+
+```bash
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+仅在第一条命令检查通过后执行第二条。如果使用宝塔、其他管理面板或容器版 Nginx，请使用对应面板或容器的检查、重载方式。
+
+> 示例里的 `127.0.0.1` 适用于 Nginx 和本扩展运行在同一台宿主机上的情况。若 Nginx 本身运行在容器里，需使用容器能够访问的地址，不能直接用该容器的 `127.0.0.1` 访问其他容器。
+
+若你修改了 `.env` 中的端口，也要同步修改 Nginx 转发目标。服务器使用同域反向代理后，用户访问主站的 HTTPS 端口即可，不需要直接访问扩展后端端口。
+
+### 用户如何登录
+
+1. 在浏览器中打开原 Sub2API 主站，使用原来的账号登录。
+2. 在**同一个浏览器**打开 `https://你的主站域名/fastaiui/`。
+3. 开启充值后，打开 `https://你的主站域名/fastaiui/recharge`。
+
+本项目没有单独的注册和登录系统，使用官方主站保存在浏览器中的登录凭证。域名、协议和端口都应与登录时一致。
+
+## 4. 可选：开启自动充值
+
+仅使用绘画和聊天时，可以跳过本节。
+
+自动充值需要：**支付商户配置 + 官方 Sub2API 的 PostgreSQL + 官方 Sub2API 的 Redis**。
+
+### 4.1 先分清两套数据库
+
+| 配置 | 连接哪一套服务 | 用途 |
+| --- | --- | --- |
+| `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | 本项目 Compose 创建的独立数据库 | 保存绘画、聊天等扩展数据 |
+| `SUB2API_DATABASE_URL` | 官方 Sub2API 正在使用的 PostgreSQL | 增加用户余额、保存充值订单和流水 |
+| `SUB2API_REDIS_URL` | 官方 Sub2API 正在使用的 Redis | 刷新官方余额和认证缓存 |
+
+不要把官方数据库的账号密码填写到本项目的 `POSTGRES_*` 中来代替连接配置；那样只会修改本扩展自己的数据库配置。
+
+首次启用前，请备份官方数据库。充值服务会在官方数据库中新建 `sub_adds_recharge_` 前缀的扩展表，并更新用户余额、写入官方充值记录；不会修改官方表结构。
+
+### 4.2 填写支付和连接信息
+
+编辑项目目录的 `.env`：
+
+```dotenv
+RECHARGE_ENABLED=true
+
+# 用户访问主站的 HTTPS 地址，不包含 /fastaiui 或 /fastaiapi
+RECHARGE_PUBLIC_URL=https://你的Sub2API主站域名
+
+# 支付平台提供的网关地址、商户 PID 和支付对接密钥
+RECHARGE_GATEWAY=https://pay.1kexiu.xyz
+RECHARGE_PID=你的商户PID
+RECHARGE_KEY=你的支付对接密钥
+
+# 官方 Sub2API 实际使用的数据库和 Redis
+SUB2API_DATABASE_URL=postgres://用户名:密码@数据库地址:5432/数据库名?sslmode=require
+SUB2API_REDIS_URL=redis://:密码@Redis地址:6379/0
+```
+
+填写时注意：
+
+- `RECHARGE_PUBLIC_URL` 是浏览器可访问的主站地址，必须为 HTTPS。
+- `RECHARGE_KEY` 使用支付商户的**支付对接密钥**，不要使用登录密码或挂机软件密钥。
+- 连接地址需要让本扩展的 `api` 容器访问得到；容器里的 `localhost` 指向它自己。
+- Redis 地址最后的 `/0` 是数据库编号，应与官方实例一致；若官方使用 `/1`，这里也应填写 `/1`。
+- Redis 没有密码时，格式为 `redis://Redis地址:6379/0`；启用 TLS 时根据实际配置使用 `rediss://`。
+- 官方数据库账号需要读取用户和 API Key、更新用户余额、写入充值记录，以及创建和维护本扩展表的权限。
+- 连接串的用户名、密码中包含特殊符号时，需要对用户名、密码分别进行 URL 编码。
+- PostgreSQL 的 `sslmode` 要与服务器实际设置一致。启用 TLS 的数据库可用 `require`；同一受控 Docker 网络里未启用 TLS 的实例需按实际情况使用 `disable`。
+
+### 4.3 官方数据库只在 Docker 内网中时，如何连接
+
+推荐让本扩展的 `api` 容器加入官方数据库所在的 Docker 网络，直接通过容器名称连接。
+
+先查找官方数据库容器名称和网络名称：
+
+```bash
+docker ps --format 'table {{.Names}}\t{{.Image}}'
+docker network ls
+```
+
+找到官方 PostgreSQL 容器后查看它所属的网络，把命令中的示例容器名替换成实际名称：
+
+```bash
+docker inspect sub2api-postgres --format '{{json .NetworkSettings.Networks}}'
+```
+
+在本项目目录新建 `compose.production.yml`：
+
+```yaml
+services:
+  api:
+    networks:
+      - default
+      - sub2api
+
+networks:
+  sub2api:
+    external: true
+    name: 替换为官方数据库所在的真实网络名
+```
+
+然后将 `.env` 中的连接地址填写为实际的官方容器名称。例如下面假设官方容器名为 `sub2api-postgres` 和 `sub2api-redis`，数据库名为 `sub2api`：
+
+```dotenv
+SUB2API_DATABASE_URL=postgres://用户名:密码@sub2api-postgres:5432/sub2api?sslmode=disable
+SUB2API_REDIS_URL=redis://:密码@sub2api-redis:6379/0
+```
+
+请确认 PostgreSQL、Redis 都能从所加入的网络访问。如果它们位于不同网络，需要把 `api` 分别加入对应网络。
+
+使用两份 Compose 配置启动：
+
+```bash
+docker compose -f docker-compose.yml -f compose.production.yml config --quiet
+docker compose -f docker-compose.yml -f compose.production.yml up -d --build
+```
+
+**后续维护也要带上这两份配置。** 具体命令见第 5、6 节。若你使用云数据库或已有可访问地址，可跳过本小节，直接使用主配置启动。
+
+### 4.4 配置套餐金额
+
+默认有 5、10、30、50、100、300、500、1000 八档套餐。默认「支付人民币数字」与「到账美元额度数字」相同，例如支付 ¥5，增加 $5 API 额度。
+
+这是默认商品定价，**不是人民币兑美元的汇率换算**，请根据自己的定价决定是否调整。
+
+需要自定义时，在 `.env` 增加或修改：
+
+```dotenv
+RECHARGE_PACKAGES='[{"id":"starter","name":"10 刀额度","amount_cents":7000,"credit":"10"},{"id":"standard","name":"50 刀额度","amount_cents":30000,"credit":"50"}]'
+```
+
+这两个示例分别表示：支付 ¥70，到账 $10；支付 ¥300，到账 $50。
+
+| 字段 | 含义 | 示例 |
+| --- | --- | --- |
+| `id` | 套餐标识，不能重复 | `starter` |
+| `name` | 页面显示名称 | `10 刀额度` |
+| `amount_cents` | 支付金额，单位为人民币分 | `7000` 表示 ¥70 |
+| `credit` | 到账 USD 额度，使用字符串，最多八位小数 | `"10"` 表示 $10 |
+
+保留整行 JSON 外层的单引号。套餐调整只影响新订单，旧订单仍按下单时保存的金额和额度处理。
+
+### 4.5 确认支付回调和到账
+
+支付回调地址由系统自动生成：
+
+```text
+https://你的主站域名/fastaiapi/api/recharge/notify
+```
+
+该地址必须能被支付平台从公网访问，不要在这一路径额外添加登录验证或跳转。
+
+配置完成后，重新加载容器中的环境变量：
+
+```bash
+# 只使用主配置时
+docker compose up -d --build
+
+# 使用官方 Docker 网络附加配置时，改用这一条
+docker compose -f docker-compose.yml -f compose.production.yml up -d --build
+```
+
+上面两种启动命令**按实际部署方式选一种**执行。
+
+检查流程：
+
+1. 用普通用户账号登录官方主站，再打开充值页，确认套餐价格和到账额度正确。
+2. 在确认自己的定价后，创建一笔小额真实订单并自行完成支付。
+3. 在「充值记录」查看订单是否显示「已到账」，核对官方账号余额与「到账日志」。
+4. 使用官方管理员账号登录，可在同一充值页面看到「充值管理」，查看异常订单、查单补单和退款登记。
+
+服务同时校验回调签名、订单金额和平台查单结果，重复通知只入账一次。金额不一致时会暂停入账并记录异常；不能以浏览器跳转成功代替到账确认。
+
+**退款需先在支付商户后台完成全额退款，再由管理员在本项目登记凭证并冲正余额。** 可用余额不足时转人工处理，目前不支持部分退款。
+
+需要查单、告警、入账事务和退款规则的详细说明，请阅读 [自动充值运行机制与维护](docs/auto-recharge.md)。
+
+## 5. 更新代码与重启
+
+### 普通部署：一条命令更新
+
+进入项目目录后执行：
 
 ```bash
 ./restart.sh
 ```
 
-脚本先执行 `git pull --ff-only`，成功后自动选择 `docker compose` 或 `docker-compose`，
-检查配置、重新构建并重建容器，保留数据库数据卷。任一步失败立即停止。
-需要使用额外的生产 Compose 配置时，可沿用 Compose 的环境变量：
+脚本会按顺序：
+
+1. 执行 `git pull --ff-only` 拉取代码。
+2. 检查 Compose 配置，重新构建镜像并重建容器。
+3. 输出当前容器状态。
+
+拉取失败或存在无法快进合并的分支时，脚本立即停止，不会继续重启。更新会重新创建容器，期间页面和接口可能短暂不可用；数据库数据卷会保留。
+
+### 使用了 `compose.production.yml` 的部署
+
+每次更新使用：
 
 ```bash
 COMPOSE_FILE=docker-compose.yml:compose.production.yml ./restart.sh
 ```
 
-项目和容器名称前缀由 `SUB_ADDS_NAME` 控制，默认值为 `fastaidesign`。
-默认端口由 `.env` 控制：前端 `SUB_ADDS_FRONTEND_PORT=4445`，后端
-`SUB_ADDS_BACKEND_PORT=4455`。统一 Nginx 的参考规则见 `nginx.conf.example`：
-`/fastaiui/` 转发前端，`/fastaiapi/` 转发后端。
+这样可以保留访问官方数据库所需的附加 Docker 网络。
 
-## 自动充值
+### 只修改了 `.env`，想重新应用配置
 
-独立页面：`https://你的主站域名/fastaiui/recharge`，绘画页面顶部也有「余额充值」入口。
-页面提供套餐购买、支付宝/微信支付、继续支付、主动查询到账、最近 100 条个人订单与日志。官方管理员登录后可见「充值管理」。
-需要与官方 Sub2API 前端部署在**同一域名**，沿用官方登录后保存在浏览器的 `auth_token`。
-用户通过官方 `/api/v1/auth/me` 验证身份，订单的用户 ID、金额和到账额度均由服务端确定。
+只使用主配置时：
 
-### 配置与部署
-
-在 `.env` 配置（真实支付密钥不要提交到 Git）：
-
-```dotenv
-RECHARGE_ENABLED=true
-RECHARGE_PUBLIC_URL=https://你的主站域名
-RECHARGE_GATEWAY=https://pay.1kexiu.xyz
-RECHARGE_PID=你的商户PID
-RECHARGE_KEY=你的商户对接密钥
-# 可选：HTTPS 异常告警接收地址及 Bearer token
-RECHARGE_ALERT_WEBHOOK_URL=
-RECHARGE_ALERT_TOKEN=
-SUB2API_DATABASE_URL=postgres://用户:密码@可访问的数据库地址:5432/sub2api?sslmode=require
-SUB2API_REDIS_URL=redis://:密码@可访问的Redis地址:6379/0
+```bash
+docker compose up -d --build
 ```
 
-`SUB2API_DATABASE_URL` 和 `SUB2API_REDIS_URL` 必须指向**官方实例实际使用的数据库和 Redis**，
-不是本目录 Compose 新建的绘画数据库/Redis；Redis DB 编号也必须一致。
-容器里的 `localhost` 指向容器自身。若官方数据库只在 Docker 网络内开放，可通过 Compose override
-把本服务的 `api` 加入官方数据库所在的外部网络，然后填写该网络内的服务名，不需要公开数据库端口：
-
-```yaml
-# compose.production.yml，替换下面的网络名和 .env 内的数据库服务地址
-services:
-  api:
-    networks: [default, sub2api]
-networks:
-  sub2api:
-    external: true
-    name: 你的官方部署网络名
-```
+使用附加生产配置时：
 
 ```bash
 docker compose -f docker-compose.yml -f compose.production.yml up -d --build
-# 查看回调异常或缓存重试日志
-docker compose logs -f api
 ```
 
-已有 `nginx.conf.example` 的转发规则即可使用。必须允许支付网关从公网访问：
-`https://你的主站域名/fastaiapi/api/recharge/notify`，不应在该回调路径增加登录验证。
-支付完成跳回 `/fastaiui/recharge?order=...`；跳回地址本身不会触发入账。
-未配置时保持 `RECHARGE_ENABLED=false`，绘画服务仍可正常运行。`api` 容器配置自动重启，启动时数据库/Redis 暂时不可用可在依赖恢复后重试启动。
+选择与你的部署方式一致的一条即可。仅执行 `docker compose restart` 不会重新加载 `.env` 中修改的环境变量。
 
-默认套餐为 5/10/30/50/100/300/500/1000，支付人民币数字与到账 USD 数字相同，
-这是按照参考截图设置的商品定价，并非外汇换算。可以自定义每档价格：
+## 6. 日常维护与备份
 
-```dotenv
-RECHARGE_PACKAGES='[{"id":"starter","name":"10 刀额度","amount_cents":7000,"credit":"10"}]'
-```
-
-`amount_cents` 是人民币分，`credit` 是到账 USD 的十进制字符串（最多八位小数）。
-套餐调整不影响已创建订单，支付使用订单保存的价格和额度。
-每个用户一小时内最多创建 20 个待支付订单。
-
-### 入账和日志
-
-所有业务代码均在 `sub-adds` 内，不依赖修改或重新构建官方镜像。
-启用后，服务在**官方数据库**中新建带 `sub_adds_recharge_` 前缀的订单和日志表；
-订单表、`users.balance` 增量更新、官方 `redeem_codes` 已使用记录、入账日志在同一 PostgreSQL 事务提交。
-官方兑换记录中的 `RA...` 号就是充值订单号（32 字符）。不修改官方表结构。
-数据库连接账号需要创建这些扩展表/索引，以及读取 `users`/`api_keys`、更新用户余额、写入 `redeem_codes` 的权限。
-首次启用前请备份数据库，并用与生产相同版本的官方实例验证字段兼容性。
-
-回调按网关提供的 MD5 规则对原始参数排序验签，拒绝重复参数，并核对 PID、支付状态、金额、
-支付方式与订单。首次入账还必须通过服务端主动查单，核对平台 `code=1/status=1`、订单号、流水、
-`money` 和 `price`；两个金额必须均与本地应付金额一致，缺失或差异都会暂停入账并生成异常。
-平台公开文档未详细解释 `price` 的费率/抹零语义，当前采取严格一致规则；有通道加价、减免或抹零时会进入人工核对，真实联调需确认其口径。
-已入账且流水一致的重复通知可直接确认，避免支付平台临时不可用影响重复通知应答。事务行锁保证并发重复通知只到账一次，全局唯一的网关流水号阻止跨订单重复使用。
-不依赖浏览器跳回或前端提交金额。付款前创建的订单不自动作废，以接收延迟付款通知。
-
-入账成功后清理官方 `billing:balance:<uid>` 和该用户 API Key 的 `apikey:auth:<SHA256>` 缓存，
-并通过 `auth:cache:invalidate` 通知官方实例清理本地认证缓存。
-Redis 失败不会回滚已收款入账；订单的 `cache_synced=false` 是持久重试队列，每 10 秒重试，
-进程重启后继续处理。缓存任务携带余额变更版本号，避免退款与旧刷新任务并发时漏刷新。回调在数据库提交后返回纯文本 `success`，数据库失败时返回 `fail` 供网关重试。
-缓存键和官方表字段依据本仓库对应的 Sub2API 版本，官方升级时应重新验证。
-
-用户在「充值记录」「到账日志」查看自己的记录，运维人员可以在数据库查询完整日志：
-
-```sql
-SELECT o.id, o.user_id, o.amount_cents, o.credit, o.status, o.trade_no,
-       o.paid_at, o.cache_synced, l.event, l.detail, l.created_at
-FROM sub_adds_recharge_orders o
-JOIN sub_adds_recharge_logs l ON l.order_id = o.id
-ORDER BY l.id DESC;
-```
-
-### 查单补偿与异常管理
-
-查单协议依据 [支付平台公开 API 文档](https://pay.1kexiu.xyz/docs/api)，使用服务端 POST `/api.php`，
-`act=order/pid/key/out_trade_no` 放在表单正文，密钥不会进入 URL、浏览器或错误响应；禁止跟随重定向。
-后台每轮最多查询 5 笔订单，按订单年龄采用 1 分钟、5 分钟、1 小时、1 天的间隔退避；
-已入账订单继续核对 7 天，已退款冲正订单停止自动查单。查单调度与缓存重试独立运行，进程重启后从数据库恢复。
-用户可在订单旁点「我已付款，查到账」，管理员可申请「查单补单」；同一订单两次主动查询至少间隔 15 秒。
-查单失败不会假定未付款或增加余额。`status=2` 表示平台超时，**不是退款**，不据此自动扣回余额。
-超时订单不再显示「继续支付」；如果平台后来确认付款，仍可正常接收回调并核对入账。
-
-「充值管理」读取最近 200 条订单/异常。后台会重新检查登录用户在官方 `users` 表中的 `role=admin`、
-`status=active` 和未删除状态，不信任浏览器声明的管理员身份。
-管理员可查看金额差异、流水冲突、平台状态变化、连续三次查单失败、入账失败和缓存刷新失败，
-填写原因后重新查单，或仅标记某条异常已处理。标记处理不会增加余额，也不绕过平台核对；异常再次出现会重新打开。
-相同订单/异常类型合并计数，避免重复通知刷屏，所有管理员操作记录操作人 ID、原因和时间。退款请求审计独立保存，余额不足或事务回滚也不会丢失操作依据。
-
-配置 `RECHARGE_ALERT_WEBHOOK_URL` 后，会 POST 以下结构；可选 `RECHARGE_ALERT_TOKEN` 作为 Bearer 鉴权。
-不配置时仅在站内显示，不推送外部消息。推送失败持久重试，间隔由 1 分钟逐步增至最多 1 小时。
-告警至少投递一次，接收端使用 `(issue_id, generation)` 去重；同一异常关闭后重开会产生新 generation。
-不包含支付密钥、签名或原始网关响应。
-
-```json
-{"event":"recharge_exception","issue_id":1,"generation":1,"order_id":"RA...","kind":"payment_mismatch","detail":"金额存在差异，暂停入账"}
-```
-
-### 退款登记与余额冲正
-
-公开文档没有退款接口；本模块**不会向支付平台发起退款**，也不提供未经核对的强制加款按钮。
-管理员必须先在商户后台完成该订单的**全额退款**，再在充值管理里登记退款凭证、原因，并勾选确认。
-服务在一个事务内锁定订单、检查余额足够、扣回该订单的全部到账额度，写入官方 `admin_balance` 负数调整记录、
-退款凭证和操作日志，并安排缓存刷新。相同订单/凭证重复提交不会重复扣款；退款凭证不能用于多个订单。
-原始付款回调在冲正后再次到达，也不会再次加款。
-若用户已经消费额度、可用余额不足或用户已删除，整笔冲正不执行，记录异常，交由管理员处理资金与已消费额度；
-不自动产生负余额。本版不支持部分退款，也无法从平台文档中的查单状态自动识别退款。
-
-### 验证
-
-完整的临时数据库测试（需要 Docker，自动新建和清理测试容器，不读取生产 `.env`）：
+以下命令默认只使用主配置。**若使用了附加生产配置**，可以先在当前终端执行：
 
 ```bash
-bash backend/scripts/test-recharge.sh
+export COMPOSE_FILE=docker-compose.yml:compose.production.yml
 ```
 
-后端本机单元测试：Go 1.22+ 下运行 `go test ./...`。前端：`npm ci && npm run build`。
-`internal/recharge/service_test.go` 提供可选真实 PostgreSQL / Redis 集成测试，
-使用 `RECHARGE_TEST_DATABASE_URL`、`RECHARGE_TEST_REDIS_URL` 指向一次性的空测试库后运行。
-测试会创建模拟官方表，**不可指向生产库**。覆盖验签、金额/商户/支付方式校验、订单归属、
-并发重复回调、流水号复用的整笔事务回滚、官方充值记录、缓存清理与 Redis 故障后的重试；
-另覆盖平台公开签名向量、主动查单补偿、少付/多付/缺失金额、未知支付状态、HTTP/业务失败、流水数字精度、
-禁止携带密钥跟随跳转、告警去重与重试、退款幂等与不足余额、退款缓存并发、官方管理员权限与跨用户访问拦截、
-以及旧版扩展表的增量升级。
-真实商户联调还需要启用配置、公网回调地址，以及一笔实际小额付款验证。
+此后本节的 `docker compose ...` 和 `./restart.sh` 都会使用两份配置。新开终端后需要重新设置；若项目不再使用附加配置，用 `unset COMPOSE_FILE` 取消。
+
+| 需求 | 命令 |
+| --- | --- |
+| 查看服务状态 | `docker compose ps` |
+| 查看最近 100 行后端日志 | `docker compose logs --tail=100 api` |
+| 持续查看后端日志 | `docker compose logs -f api`，按 `Ctrl + C` 退出查看 |
+| 查看所有服务最近日志 | `docker compose logs --tail=100` |
+| 临时停止 | `docker compose stop` |
+| 启动已停止的服务 | `docker compose start` |
+| 停止并移除容器，保留数据卷 | `docker compose down` |
+| 重新创建并启动 | `docker compose up -d --build` |
+
+**不要把 `docker compose down -v` 用作日常重启命令，它会删除本项目的数据卷。**
+
+备份本扩展的绘画/聊天数据库：
+
+```bash
+docker compose exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' > "sub-adds-backup-$(date +%Y%m%d-%H%M%S).sql"
+```
+
+该命令只备份本项目独立的 PostgreSQL。**充值订单、入账日志和用户余额存放在官方 Sub2API 数据库中，需要另行备份官方数据库。** 请将备份文件和 `.env` 妥善保存到安全位置。
+
+已经产生数据后，不要随意修改 `SUB_ADDS_NAME`、`POSTGRES_DB`、`POSTGRES_USER`、`POSTGRES_PASSWORD`。修改项目名可能让 Compose 使用另一套数据卷；修改环境变量也不会自动更改已初始化数据库中的账号密码。
+
+## 7. 常见问题
+
+### 页面打不开
+
+先执行 `docker compose ps`，确认 `ui` 和 `api` 都在运行。如果通过域名访问，检查 Nginx 的 `/fastaiui/` 和 `/fastaiapi/` 转发；如果只是测试 IP 加端口访问，检查 `.env` 的前端端口和服务器访问规则。
+
+### 页面能打开，但提示未登录或 401
+
+先登录原 Sub2API 主站，再从同一浏览器打开主站域名下的扩展。不要用另一个域名、HTTP 协议或 IP 加端口的地址代替。登录过期时，回主站重新登录后刷新扩展页面。
+
+### 绘画初始化失败或模型接口报错
+
+检查 `FASTAIAPI_BASE_URL` 是否指向自己的官方 Sub2API 根地址、末尾是否误加 `/api`。再检查主站账号、API Key、可用分组、余额和所选模型是否正常。具体错误看 `docker compose logs --tail=100 api`。
+
+### 充值页面提示「充值服务尚未配置」或 503
+
+如果 `RECHARGE_ENABLED=false`，充值服务未启用，这是预期行为。需要充值时按第 4 节填写全部配置，并用 `docker compose up -d --build` 重新创建容器；使用附加配置的部署仍需带上附加配置。
+
+### 开启充值后，后端一直重启
+
+查看 `api` 日志，重点检查官方数据库、Redis 地址和账号密码，以及 `RECHARGE_PUBLIC_URL`、商户 PID 和密钥是否填写。连接官方内网数据库时，确认 `api` 已加入正确的 Docker 网络。`localhost` 或 Linux 上未配置的 `host.docker.internal` 通常不能直接用于访问官方容器。
+
+### 提示 `address already in use` 或端口被占用
+
+在 `.env` 中修改 `SUB_ADDS_FRONTEND_PORT`、`SUB_ADDS_BACKEND_PORT`，重新创建容器，并同步修改 Nginx 的目标端口。
+
+### 已付款但没有到账
+
+先查看「充值记录」和「到账日志」，可以点击「我已付款，查到账」。后台也会自动查单补偿。仍未到账时，由管理员进入「充值管理」查看金额差异、查单失败等异常，并核对支付平台订单。请保留订单号，避免重复付款。
+
+### 金额一致仍被拦截
+
+系统同时核对平台查单的 `money` 和 `price`。若通道有加价、抹零、减免，或金额字段缺失，会进入异常核对。请先确认平台金额口径，不要直接强制加余额；详见 [充值维护说明](docs/auto-recharge.md)。
+
+### 更新时提示本地改动会被覆盖或分支分叉
+
+先执行 `git status` 查看原因。保留并处理自己的改动或联系维护人员后再重试，不要直接用强制重置覆盖配置和代码。`restart.sh` 遇到拉取失败会停止，原有容器不会因这一步被重启。
+
+### `restart.sh` 提示没有执行权限
+
+```bash
+chmod +x restart.sh
+./restart.sh
+```
+
+使用附加生产配置时，第二条命令仍应改为 `COMPOSE_FILE=docker-compose.yml:compose.production.yml ./restart.sh`。
+
+## 8. 配置项速查
+
+配置模板见 [.env.example](.env.example)。修改 `.env` 后需重新创建容器才能应用。
+
+| 配置项 | 默认值 / 填写内容 | 说明 |
+| --- | --- | --- |
+| `FASTAIAPI_BASE_URL` | 你的官方 Sub2API 根地址 | 首次部署必须修改 |
+| `SUB_ADDS_NAME` | `fastaidesign` | Compose 项目名和容器名称前缀 |
+| `SUB_ADDS_FRONTEND_PORT` | `4445` | 对外前端端口 |
+| `SUB_ADDS_BACKEND_PORT` | `4455` | 对外后端端口 |
+| `POSTGRES_DB` | `sub_adds` | 本扩展独立数据库名 |
+| `POSTGRES_USER` | `sub_adds` | 本扩展独立数据库用户 |
+| `POSTGRES_PASSWORD` | `change-me`，部署前请修改 | 本扩展独立数据库密码 |
+| `RECHARGE_ENABLED` | `false` | 需要充值时改为 `true` |
+| `RECHARGE_PUBLIC_URL` | 主站 HTTPS 根地址 | 开启充值必填 |
+| `RECHARGE_GATEWAY` | `https://pay.1kexiu.xyz` | 支付网关地址 |
+| `RECHARGE_PID` | 支付商户 PID | 开启充值必填 |
+| `RECHARGE_KEY` | 支付对接密钥 | 开启充值必填，仅保存在服务端 |
+| `SUB2API_DATABASE_URL` | 官方 PostgreSQL 连接串 | 开启充值必填 |
+| `SUB2API_REDIS_URL` | 官方 Redis 连接串 | 开启充值必填，核对末尾数据库编号 |
+| `RECHARGE_PACKAGES` | 留空使用八档默认套餐 | 可选的套餐 JSON |
+| `RECHARGE_ALERT_WEBHOOK_URL` | 留空 | 可选的 HTTPS 异常告警接收地址 |
+| `RECHARGE_ALERT_TOKEN` | 留空 | 可选的告警 Bearer Token |
+
+## 9. 联系方式
+
+**QQ 群：48878665**
+
+遇到问题时，建议说明部署方式、执行的命令、报错信息和相关订单号。发日志或配置截图前，请遮住数据库密码、支付密钥和登录 Token，方便安全地定位问题。
