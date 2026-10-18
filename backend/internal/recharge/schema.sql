@@ -41,3 +41,10 @@ ALTER TABLE sub_adds_recharge_orders ADD COLUMN IF NOT EXISTS payment_source tex
 ALTER TABLE sub_adds_recharge_orders ADD COLUMN IF NOT EXISTS payment_source_kind text NOT NULL DEFAULT '';
 ALTER TABLE sub_adds_recharge_orders ADD COLUMN IF NOT EXISTS payment_qr text NOT NULL DEFAULT '';
 ALTER TABLE sub_adds_recharge_orders ADD COLUMN IF NOT EXISTS payment_qr_kind text NOT NULL DEFAULT '';
+
+-- Preserve the quoted package independently of the verified settlement.
+ALTER TABLE sub_adds_recharge_orders ADD COLUMN IF NOT EXISTS paid_amount_cents bigint;
+ALTER TABLE sub_adds_recharge_orders ADD COLUMN IF NOT EXISTS credited_credit numeric(20,8);
+-- Old paid orders were settled at the full quoted amount. Never re-credit them.
+UPDATE sub_adds_recharge_orders SET paid_amount_cents=amount_cents,credited_credit=credit
+ WHERE status='paid' AND paid_amount_cents IS NULL;

@@ -47,7 +47,10 @@ func TestRechargeAuthorization(t *testing.T) {
  CREATE TABLE api_keys(key text,user_id bigint,deleted_at timestamptz);
  CREATE TABLE redeem_codes(code varchar(32) UNIQUE,type text,value numeric(20,8),status text,used_by bigint,used_at timestamptz,created_at timestamptz);
  INSERT INTO users(id,role) VALUES(1,'user'),(2,'admin');
- CREATE TABLE sub_adds_recharge_orders(id varchar(32) PRIMARY KEY,user_id bigint NOT NULL,package_id text NOT NULL,amount_cents bigint NOT NULL,credit numeric(20,8) NOT NULL,payment_type text NOT NULL,status text DEFAULT 'pending',trade_no text UNIQUE,created_at timestamptz DEFAULT now(),paid_at timestamptz,cache_synced boolean DEFAULT false);`)
+ CREATE TABLE sub_adds_recharge_orders(id varchar(32) PRIMARY KEY,user_id bigint NOT NULL,package_id text NOT NULL,amount_cents bigint NOT NULL,credit numeric(20,8) NOT NULL,payment_type text NOT NULL,status text DEFAULT 'pending',trade_no text UNIQUE,created_at timestamptz DEFAULT now(),paid_at timestamptz,cache_synced boolean DEFAULT false);
+ UPDATE users SET balance=5 WHERE id=1;
+ INSERT INTO sub_adds_recharge_orders(id,user_id,package_id,amount_cents,credit,payment_type,status,trade_no,paid_at) VALUES('legacy-paid-before-upgrade',1,'5',500,5,'alipay','paid','legacy-trade',now());
+ INSERT INTO redeem_codes(code,type,value,status,used_by) VALUES('legacy-paid-before-upgrade','balance',5,'used',1);`)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -57,6 +60,12 @@ func TestRechargeAuthorization(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer svc.Close()
+	var legacyCents int64
+	var legacyCredit, legacyBalance string
+	if e = scoped.QueryRowContext(ctx, `SELECT paid_amount_cents,credited_credit::text,(SELECT balance::text FROM users WHERE id=1) FROM sub_adds_recharge_orders WHERE id='legacy-paid-before-upgrade'`).Scan(&legacyCents, &legacyCredit, &legacyBalance); e != nil || legacyCents != 500 || legacyCredit != "5.00000000" || legacyBalance != "5.00000000" {
+		t.Fatal("legacy migration changed balance or settlement", e, legacyCents, legacyCredit, legacyBalance)
+	}
+
 	auth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var id int
 		if r.Header.Get("Authorization") == "Bearer user" {
@@ -89,6 +98,7 @@ func TestRechargeAuthorization(t *testing.T) {
 		{"GET", "admin/orders", "", "", 401},
 		{"GET", "admin/issues", "invalid", "", 401},
 		{"GET", "admin/orders", "user", "", 403},
+		{"GET", "admin/issues", "user", "", 403},
 		{"POST", "admin/orders/fake/refund", "user", `{"reason":"测试","reference":"ref","confirmed":true}`, 403},
 		{"GET", "admin/orders", "admin", "", 200},
 		{"GET", "admin/issues", "admin", "", 200},
@@ -101,6 +111,9 @@ func TestRechargeAuthorization(t *testing.T) {
 				t.Fatalf("got %d want %d: %s", r.Code, tc.want, r.Body.String())
 			}
 		})
+	}
+	if r := request("GET", "access", "user", ""); r.Code != 200 || !strings.Contains(r.Body.String(), `"is_admin":false`) {
+		t.Fatal("untrusted admin role exposed in access", r.Body.String())
 	}
 	other, e := svc.Create(ctx, 2, "5", "alipay")
 	if e != nil {
@@ -115,7 +128,13 @@ func TestRechargeAuthorization(t *testing.T) {
 			t.Fatal("other user's order exposed", r.Code)
 		}
 	}
-	created := request("POST", "orders", "user", `{"package_id":"5","payment_type":"alipay","user_id":2,"amount_cents":1,"credit":"999999"}`)
+	if r := request("GET", "logs", "user", ""); strings.Contains(r.Body.String(), other.ID) {
+		t.Fatal("other user's logs exposed")
+	}
+	if r := request("GET", "orders", "user", ""); strings.Contains(r.Body.String(), other.ID) {
+		t.Fatal("other user's orders exposed")
+	}
+	created := request("POST", "orders", "user", `{"package_id":"5","payment_type":"alipay","user_id":2,"amount_cents":1,"credit":"999999","paid_amount_cents":999999,"credited_credit":"999999"}`)
 	if created.Code != 200 {
 		t.Fatal(created.Code, created.Body.String())
 	}
@@ -134,6 +153,11 @@ func TestRechargeAuthorization(t *testing.T) {
 	}
 	if uid != 1 || amount != 500 || credit != "5.00000000" {
 		t.Fatal("client-controlled order fields accepted", uid, amount, credit)
+	}
+	var clean bool
+	scoped.QueryRowContext(ctx, `SELECT paid_amount_cents IS NULL AND credited_credit IS NULL FROM sub_adds_recharge_orders WHERE id=$1`, result.Data.Order.ID).Scan(&clean)
+	if !clean {
+		t.Fatal("client injected settlement fields")
 	}
 	scoped.ExecContext(ctx, `UPDATE users SET status='disabled' WHERE id=2`)
 	if r := request("GET", "admin/orders", "admin", ""); r.Code != 403 {

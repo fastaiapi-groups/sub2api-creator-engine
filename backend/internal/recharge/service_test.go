@@ -187,6 +187,7 @@ func TestPaymentIntegration(t *testing.T) {
 	}
 	t.Log("concurrent callbacks, ownership, atomic rollback, cache invalidation and recovery verified")
 	t.Run("checkout", func(t *testing.T) { testCheckout(t, s) })
+	t.Run("actual_settlement_and_forgery", func(t *testing.T) { testActualSettlement(t, s) })
 	t.Run("operations", func(t *testing.T) { testOperations(t, s) })
 }
 

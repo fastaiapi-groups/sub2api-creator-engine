@@ -241,7 +241,7 @@ func (s *Service) RegisterRefund(ctx context.Context, id string, actor int64, re
 		return ErrConflict
 	}
 	var balance string
-	err = tx.QueryRowContext(ctx, `UPDATE users SET balance=balance-$1::numeric,updated_at=now() WHERE id=$2 AND deleted_at IS NULL AND balance>=$1::numeric RETURNING balance::text`, o.Credit, o.UserID).Scan(&balance)
+	err = tx.QueryRowContext(ctx, `UPDATE users SET balance=balance-$1::numeric,updated_at=now() WHERE id=$2 AND deleted_at IS NULL AND balance>=$1::numeric RETURNING balance::text`, o.settledCredit(), o.UserID).Scan(&balance)
 	if errors.Is(err, sql.ErrNoRows) {
 		tx.Rollback()
 		s.recordIssue(ctx, id, "refund_balance", "管理员登记退款时可用余额不足或用户已删除，未扣余额；需要人工处理已消费额度")
@@ -250,7 +250,7 @@ func (s *Service) RegisterRefund(ctx context.Context, id string, actor int64, re
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO redeem_codes(code,type,value,status,used_by,used_at,created_at) VALUES($1,'admin_balance',-$2::numeric,'used',$3,now(),now())`, "RV"+id[2:], o.Credit, o.UserID)
+	_, err = tx.ExecContext(ctx, `INSERT INTO redeem_codes(code,type,value,status,used_by,used_at,created_at) VALUES($1,'admin_balance',-$2::numeric,'used',$3,now(),now())`, "RV"+id[2:], o.settledCredit(), o.UserID)
 	if err != nil {
 		return err
 	}
@@ -258,7 +258,7 @@ func (s *Service) RegisterRefund(ctx context.Context, id string, actor int64, re
 	if err != nil {
 		return err
 	}
-	detail, _ := json.Marshal(map[string]any{"actor_id": actor, "refund_reference": reference, "reason": note, "debit": o.Credit, "balance_after": balance})
+	detail, _ := json.Marshal(map[string]any{"actor_id": actor, "refund_reference": reference, "reason": note, "debit": o.settledCredit(), "balance_after": balance})
 	_, err = tx.ExecContext(ctx, `INSERT INTO sub_adds_recharge_logs(order_id,event,detail) VALUES($1,'refund_registered',$2)`, id, string(detail))
 	if err != nil {
 		return err

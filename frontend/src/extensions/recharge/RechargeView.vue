@@ -1,31 +1,37 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { apiClient } from '../../api/client'
 import RechargeAdmin from './RechargeAdmin.vue'
 import RechargeDialog from './RechargeDialog.vue'
+import RechargeOrders from './RechargeOrders.vue'
+import RechargeLogs from './RechargeLogs.vue'
 import type {Package,Order,Log} from './types'
 const packages = ref<Package[]>([]), orders = ref<Order[]>([]), logs = ref<Log[]>([])
 const tab = ref('products'), busy = ref(false), error = ref(''), notice = ref('')
 const balance = ref<string | number>('—'), email = ref(''), authenticated = ref(false), isAdmin = ref(false)
-let timer: ReturnType<typeof setInterval> | undefined
+let timer: ReturnType<typeof setInterval> | undefined, refreshTimer: ReturnType<typeof setInterval> | undefined
+const paidOrders = computed(() => orders.value.filter(o => o.status === 'paid' && !o.reversed_at))
+const totalCredit = computed(() => paidOrders.value.reduce((n,o) => n+Number(o.credited_credit ?? o.credit),0))
+const pendingCount = computed(() => orders.value.filter(o => o.status === 'pending' && o.gateway_status !== 'expired').length)
 const amount = (n: number) => (n / 100).toFixed(2)
-const time = (s: string) => new Date(s).toLocaleString('zh-CN')
-function logDetail(l: Log): string {
-  try {
-    const d = JSON.parse(l.detail)
-    if (l.event === 'credited') return `到账 $${Number(d.credit)} · 入账后余额 $${Number(d.balance_after)} · 支付流水 ${d.trade_no}`
-    if (l.event === 'refund_registered') return `扣回 $${Number(d.debit)} · 冲正后余额 $${Number(d.balance_after)} · 退款凭证 ${d.refund_reference} · 操作人 #${d.actor_id} · ${d.reason}`
-    if (l.event === 'refund_requested') return `操作人 #${d.actor_id} · 退款凭证 ${d.refund_reference} · ${d.reason}`
-    if (l.event === 'recheck_requested' || l.event === 'issue_resolved') return `操作人 #${d.actor_id} · ${d.reason}`
-  } catch { /* Plain-text events need no parsing. */ }
-  return l.detail
-}
 function showError(e: any) { error.value = e?.response?.data?.message || e?.message || '请求失败，请稍后重试' }
+let refreshSequence=0
 async function refresh() {
-  const [me, list, history] = await Promise.all([apiClient.get('/proxy/me'), apiClient.get('/recharge/orders'), apiClient.get('/recharge/logs')])
-  isAdmin.value = me.data.role === 'admin'; balance.value = me.data.balance; email.value = me.data.email; authenticated.value = true
-  orders.value = list.data; logs.value = history.data
+ const sequence=++refreshSequence, token=localStorage.getItem('auth_token') || localStorage.getItem('token')
+ let me
+ try {me=await apiClient.get('/proxy/me')} catch(e:any) {
+  if(sequence===refreshSequence && (e?.response?.status===401 || e?.status===401)){authenticated.value=false;isAdmin.value=false;orders.value=[];logs.value=[];email.value='';balance.value='—'}
+  throw e
+ }
+ const [list,history,access]=await Promise.allSettled([apiClient.get('/recharge/orders'),apiClient.get('/recharge/logs'),apiClient.get('/recharge/access')])
+ if(sequence!==refreshSequence || token!==(localStorage.getItem('auth_token') || localStorage.getItem('token')))return
+ if(email.value!==me.data.email){orders.value=[];logs.value=[];isAdmin.value=false}
+ balance.value=me.data.balance;email.value=me.data.email;authenticated.value=true
+ if(list.status==='fulfilled')orders.value=list.value.data;else showError(list.reason)
+ if(history.status==='fulfilled')logs.value=history.value.data;else showError(history.reason)
+ isAdmin.value=access.status==='fulfilled' && access.value.data.is_admin===true
 }
+
 const checkoutOpen = ref(false), selectedProduct = ref<Package | null>(null), selectedOrder = ref<Order | null>(null)
 function create(p: Package) {
  if(!authenticated.value){error.value='请先在本站登录后再充值';return}
@@ -52,11 +58,12 @@ onMounted(async () => {
   if (!token) return
   try {
     await refresh()
+    refreshTimer=setInterval(() => {if(document.visibilityState==='visible') refresh().catch(showError)},30000)
     const id = new URLSearchParams(window.location.search).get('order')
     if (id) { tab.value = 'orders'; notice.value = '正在等待支付结果确认…'; await checkReturn(id) }
   } catch (e) { showError(e) }
 })
-onUnmounted(() => clearInterval(timer))
+onUnmounted(() => {clearInterval(timer);clearInterval(refreshTimer)})
 async function recheck(o: Order) {
   busy.value = true; error.value = ''
   try {
@@ -65,34 +72,27 @@ async function recheck(o: Order) {
     await refresh()
   } catch (e) { showError(e) } finally { busy.value = false }
 }
-const events: Record<string, string> = { credited: '余额已入账', created: '订单创建', exception: '订单异常', recheck_requested: '申请查单', issue_resolved: '异常已处理', refund_registered: '退款已冲正', refund_requested: '申请退款登记' }
 async function manualRefresh() { error.value = ''; try { await refresh() } catch (e) { showError(e) } }
 </script>
 
 <template>
   <div class="recharge">
-    <header><div class="nav"><a class="brand" href="/fastaiui/recharge"><i></i>自动充值</a><nav><button :class="{ active: tab === 'products' }" @click="tab = 'products'">充值套餐</button><button :class="{ active: tab === 'orders' }" @click="tab = 'orders'">充值记录</button><button :class="{ active: tab === 'logs' }" @click="tab = 'logs'">到账日志</button><button v-if="isAdmin" :class="{ active: tab === 'admin' }" @click="tab = 'admin'">充值管理</button></nav><a class="back" href="/fastaiui/">返回绘画</a></div></header>
+    <header><div class="nav"><a class="brand" href="/fastaiui/recharge"><i>↗</i> 充值中心</a><nav aria-label="充值导航"><button :class="{ active: tab === 'products' }" @click="tab = 'products'">总览</button><button :class="{ active: tab === 'orders' }" @click="tab = 'orders'">充值记录</button><button :class="{ active: tab === 'logs' }" @click="tab = 'logs'">到账日志</button><button v-if="isAdmin" :class="{ active: tab === 'admin' }" @click="tab = 'admin'">充值管理 <small>管理员</small></button></nav><a class="back" href="/fastaiui/">返回绘画 ↗</a></div></header>
     <main>
-      <section class="hero"><span class="eyebrow">API BALANCE</span><h1>余额随时续航</h1><p>选择额度，完成支付，余额自动到账。</p><div class="account"><template v-if="authenticated"><span>{{ email }}</span><span>当前余额 <strong>${{ balance }}</strong></span></template><template v-else><span>登录后即可充值并查看到账记录</span><a href="/login">前往登录 →</a></template></div></section>
-      <div v-if="error" class="alert error" role="alert">{{ error }}<button @click="error = ''">关闭</button></div>
-      <div v-if="notice" class="alert" role="status">{{ notice }}</div>
+      <section class="page-heading"><div><h1>自动充值</h1><p>扫码支付，实付多少，按套餐比例自动到账。</p></div><div class="identity" v-if="authenticated"><span>{{ email }}</span><span class="role">{{ isAdmin ? '管理员账号' : '仅显示我的数据' }}</span><button class="refresh" @click="manualRefresh">刷新 ↻</button></div><a v-else class="login" href="/login">登录后充值 →</a></section>
+      <div v-if="error" class="alert error" role="alert">{{ error }}<button @click="error = ''">关闭</button></div><div v-if="notice" class="alert" role="status">{{ notice }}<button @click="notice = ''">关闭</button></div>
+      <section class="metrics"><div><span>当前可用余额</span><strong>${{ balance }}</strong></div><div><span>最近订单到账额度</span><strong>${{ Number(totalCredit.toFixed(8)) }}</strong></div><div><span>已到账订单</span><strong>{{ paidOrders.length }} <small>笔</small></strong></div><div><span>待支付订单</span><strong>{{ pendingCount }} <small>笔</small></strong></div></section>
       <template v-if="tab === 'products'">
-        <div class="toolbar"><h2>精选充值套餐</h2><span class="supported-methods">支持支付宝 · 微信支付</span></div>
-        <div class="products"><article v-for="p in packages" :key="p.id" class="card"><h3>{{ p.name }}</h3><p>{{ Number(p.credit) }} USD API 使用额度</p><div class="badges"><span>ϟ 自动到账</span><span class="green">● 官方余额直充</span></div><div class="price"><div>¥{{ amount(p.amount_cents) }} <small>CNY</small></div><button :disabled="busy || !authenticated" @click="create(p)">立即充值 <span>↗</span></button></div></article></div>
-        <p class="hint">到账额度以套餐显示为准。完成支付后，可在充值记录中查看到账进度。</p>
+        <section class="panel packages-panel"><div class="panel-heading"><h2>选择充值套餐</h2><span>支付宝 / 微信 · 服务端核验 · 自动到账</span></div><div class="products"><article v-for="p in packages" :key="p.id" class="package"><div><strong>${{ Number(p.credit) }} <small>API 额度</small></strong><span>支付 ¥{{ amount(p.amount_cents) }}</span></div><button :disabled="busy || !authenticated" :aria-label="`立即充值 ${p.name}`" @click="create(p)">立即充值 ↗</button></article></div><p class="rule">按实付金额 × 套餐额度 ÷ 套餐价格入账。例如 1 元套餐实付 0.01 元，自动到账 $0.01；未支付不入账。</p></section>
+        <div class="workspace"><section class="panel"><div class="panel-heading"><h2>我的充值记录 <b>{{ orders.length }}</b></h2><button class="text-button" @click="tab='orders'">查看记录 →</button></div><RechargeOrders :orders="orders" :busy="busy" :page-size="3" @resume="resume" @recheck="recheck"/></section><section class="panel"><div class="panel-heading"><h2>我的到账日志 <b>{{ logs.length }}</b></h2><button class="text-button" @click="tab='logs'">查看日志 →</button></div><RechargeLogs :logs="logs" :page-size="3"/></section></div>
       </template>
       <RechargeAdmin v-else-if="tab === 'admin' && isAdmin"/>
-      <template v-else>
-        <div class="toolbar"><h2>{{ tab === 'orders' ? '充值记录' : '到账日志' }}</h2><button class="refresh" @click="manualRefresh">刷新记录 ↻</button></div>
-        <div v-if="!authenticated" class="empty">请先登录以查看您的充值记录。</div>
-        <div v-else-if="tab === 'orders'" class="table-wrap"><table><thead><tr><th>订单号 / 时间</th><th>支付金额</th><th>到账额度</th><th>状态</th><th></th></tr></thead><tbody><tr v-for="o in orders" :key="o.id"><td><code>{{ o.id }}</code><small>{{ time(o.created_at) }}</small></td><td>¥{{ amount(o.amount_cents) }}</td><td>${{ Number(o.credit) }}</td><td><span class="status" :class="{ paid: o.status === 'paid' }">{{ o.reversed_at ? '退款已冲正' : o.status === 'paid' ? '已到账' : o.gateway_status === 'expired' ? '平台超时' : '待支付' }}</span></td><td><button v-if="o.status === 'pending'" :disabled="busy" class="refresh" @click="recheck(o)">我已付款，查到账</button> <button v-if="o.status === 'pending' && o.gateway_status !== 'expired'" :disabled="busy" class="refresh" @click="resume(o)">继续支付</button></td></tr></tbody></table><div v-if="!orders.length" class="empty">还没有充值记录，选一个套餐开始吧。</div></div>
-        <div v-else class="table-wrap"><table><thead><tr><th>时间</th><th>订单号</th><th>事件</th><th>详情</th></tr></thead><tbody><tr v-for="l in logs" :key="l.order_id + l.event + l.created_at"><td>{{ time(l.created_at) }}</td><td><code>{{ l.order_id }}</code></td><td>{{ events[l.event] || l.event }}</td><td>{{ logDetail(l) }}</td></tr></tbody></table><div v-if="!logs.length" class="empty">暂无到账日志。</div></div>
-        <p class="hint">显示最近 100 条记录。</p>
-      </template>
-    </main><RechargeDialog v-if="checkoutOpen" :product="selectedProduct" :existing-order="selectedOrder" :email="email" @close="closeCheckout" @paid="paymentCompleted"/><footer>安全支付 · 自动到账 · 每笔可追溯</footer>
+      <section v-else class="panel"><div class="panel-heading"><h2>{{ tab === 'orders' ? '我的充值记录' : '我的到账日志' }}</h2><span>仅当前账号 · 最近 100 条 · 分页展示</span></div><p v-if="!authenticated" class="empty">请先登录以查看自己的记录。</p><RechargeOrders v-else-if="tab==='orders'" :orders="orders" :busy="busy" :page-size="8" @resume="resume" @recheck="recheck"/><RechargeLogs v-else :logs="logs" :page-size="8"/></section>
+      <footer>支付成功自动入账，无需管理员审核。普通用户仅可查看自己的订单；充值管理仅管理员可用。<span>技术交流 QQ 群：48878665</span></footer>
+    </main><RechargeDialog v-if="checkoutOpen" :product="selectedProduct" :existing-order="selectedOrder" :email="email" @close="closeCheckout" @paid="paymentCompleted"/>
   </div>
 </template>
-
 <style scoped>
-.recharge{min-height:100vh;background:#fafafa;color:#191a20;font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}header{background:#fff;border-bottom:1px solid #e9e9ee}.nav{max-width:1280px;margin:auto;display:flex;align-items:center;gap:48px;min-height:80px;padding:0 24px}a{text-decoration:none;color:inherit}.brand{display:flex;align-items:center;gap:9px;font-weight:750;color:#2764ed;background:#eff6ff;border:1px solid #bfd7ff;border-radius:30px;padding:11px 18px}.brand i{width:9px;height:9px;border-radius:50%;background:#2764ed}nav{display:flex;gap:24px}nav button{border:0;background:none;color:#81838f;padding:12px 0}nav .active{color:#20232c;font-weight:650}.back{margin-left:auto;font-size:14px;color:#686c78}main{max-width:1280px;margin:auto;padding:0 24px}.hero{text-align:center;padding:62px 0 46px}.eyebrow{color:#2864e8;font-size:12px;letter-spacing:3px;font-weight:650}h1{font-size:48px;letter-spacing:-2px;margin:15px 0}p{color:#858590;line-height:1.6}.hero>p{font-size:17px}.account{display:inline-flex;gap:24px;align-items:center;background:#fff;border:1px solid #e8e8ee;border-radius:12px;padding:13px 20px;font-size:13px;color:#777b87;margin-top:14px}.account strong{color:#1d2434;margin-left:6px}.account a{color:#2864e8}.toolbar{display:flex;align-items:center;justify-content:space-between;margin:12px 0 24px;gap:15px}h2{font-size:19px;margin:0}.supported-methods{font-size:13px;color:#8a909b}.payment{display:flex;gap:20px;background:white;border:1px solid #e8e8ee;border-radius:30px;padding:12px 18px;font-size:14px}.payment label{display:flex;align-items:center;gap:6px;cursor:pointer}input{accent-color:#2864e8}.products{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:18px}.card{background:#fff;border:1px solid #e5e6ec;border-radius:19px;padding:26px 23px;box-shadow:0 2px 3px #181c2905}.card h3{font-size:23px;margin:5px 0 16px;letter-spacing:-.6px}.card p{font-size:13px;margin:0 0 18px}.badges{display:flex;gap:7px;flex-wrap:wrap;min-height:53px;align-content:flex-start}.badges span{font-size:11px;border:1px solid #c4dcff;border-radius:20px;background:#f0f7ff;color:#3071ef;padding:5px 9px}.badges .green{background:#f1fcf5;border-color:#c4f0d2;color:#22a05e}.price{display:flex;align-items:center;justify-content:space-between;gap:8px;border-top:1px dashed #e6e7ed;margin-top:14px;padding-top:20px}.price>div{font-size:23px;font-weight:750;letter-spacing:-1px;white-space:nowrap}.price small{font-size:10px;color:#a2a5af;letter-spacing:0}.price button{border:0;border-radius:24px;background:#1b1b20;color:#fff;font-size:12px;font-weight:600;padding:11px 12px;white-space:nowrap}.price button span{margin-left:6px}button:disabled{opacity:.4;cursor:not-allowed}.hint{font-size:12px;margin:24px 0 40px}.alert{display:flex;justify-content:space-between;padding:15px 20px;border:1px solid #bed8fb;background:#eef6ff;color:#2864ad;border-radius:10px;margin-bottom:20px;font-size:14px}.error{background:#fff2f2;color:#ad3333;border-color:#facaca}.alert button{border:0;background:transparent;color:inherit}.table-wrap{overflow-x:auto;border:1px solid #e5e6ec;border-radius:14px;background:#fff}table{width:100%;border-collapse:collapse;text-align:left;font-size:13px}th{background:#f5f6f9;color:#858895;font-weight:500;white-space:nowrap}td,th{padding:19px 20px;border-bottom:1px solid #eeeef2}td small{display:block;color:#9596a1;margin-top:6px}td code{font-size:11px}td:last-child{max-width:350px;overflow-wrap:anywhere}.status{display:inline-block;white-space:nowrap;border-radius:20px;padding:5px 10px;background:#fff7e6;color:#ad7a20}.paid{background:#eaf9f0;color:#22985c}.refresh{background:#fff;border:1px solid #e1e3ea;border-radius:8px;font-size:12px;padding:9px 13px;white-space:nowrap}.empty{padding:50px;text-align:center;color:#9395a0}footer{text-align:center;color:#a0a2ad;font-size:12px;padding:20px 0 35px}@media(max-width:1100px){.products{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:600px){.nav{gap:16px;flex-wrap:wrap;padding:16px;min-height:70px}nav{gap:16px;order:3;width:100%;justify-content:center;font-size:14px}.hero{padding:36px 0 26px}h1{font-size:36px}.account{flex-direction:column;gap:8px}.products{grid-template-columns:1fr}.toolbar{flex-direction:column;align-items:flex-start}main{padding:0 16px}.card{padding:24px}.badges{min-height:35px}}
+.recharge{min-height:100vh;background:#f6f8fc;color:#243047;color-scheme:light;font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}.recharge button{font:inherit;cursor:pointer}.recharge button:disabled{opacity:.45;cursor:not-allowed}a{text-decoration:none;color:inherit}header{background:#fff;border-bottom:1px solid #e6ebf3}.nav{max-width:1440px;margin:auto;display:flex;align-items:center;gap:30px;height:54px;padding:0 28px}.brand{font-size:17px;font-weight:750;white-space:nowrap}.brand i{display:inline-grid;place-items:center;width:28px;height:28px;background:#2864ed;border-radius:8px;color:#fff;font-style:normal}nav{display:flex;height:100%;align-items:center;gap:6px}nav button{border:0;background:transparent;color:#6a7890;padding:10px 14px;border-radius:8px;font-size:13px!important}nav button.active{background:#edf3ff;color:#285ee5;font-weight:650}nav small{font-size:10px;margin-left:3px}.back{margin-left:auto;font-size:12px;color:#6a7890;white-space:nowrap}main{max-width:1440px;padding:16px 28px 0;margin:auto}.page-heading{display:flex;justify-content:space-between;align-items:center;gap:18px;margin-bottom:12px}h1{font-size:22px;letter-spacing:-.5px;margin:0 0 5px}.page-heading p{font-size:12px;color:#7c879b;margin:0}.identity{display:flex;align-items:center;gap:10px;font-size:12px;color:#66748b}.role{border:1px solid #dce5f5;background:white;padding:5px 8px;border-radius:6px;font-size:10px}.refresh{color:#4e607e;background:white;border:1px solid #dce4f0;border-radius:7px;padding:7px 12px;font-size:12px!important}.login{color:#2864ed;font-size:13px}.metrics{display:grid;grid-template-columns:1.4fr 1.4fr 1fr 1fr;gap:12px;margin-bottom:12px}.metrics>div{background:#fff;border:1px solid #e3e9f2;border-radius:11px;padding:10px 16px;display:flex;flex-direction:column;gap:5px}.metrics span{font-size:11px;color:#8590a2}.metrics strong{font-size:23px;letter-spacing:-.5px;color:#243047}.metrics>div:first-child strong{color:#275ee7}.metrics small{font-size:11px;font-weight:400;color:#8e99aa}.panel{background:#fff;border:1px solid #e3e9f2;border-radius:12px;min-width:0;overflow:hidden}.panel-heading{padding:12px 16px;display:flex;align-items:center;justify-content:space-between;gap:10px;border-bottom:1px solid #edf0f6}.panel-heading h2{font-size:14px;margin:0;color:#2d3b53}.panel-heading h2 b{font-size:10px;background:#edf2fa;color:#71809a;padding:3px 6px;border-radius:5px;font-weight:500;margin-left:4px}.panel-heading>span{font-size:11px;color:#8b97a8}.text-button{border:0;background:transparent;color:#5272ae;padding:0;font-size:11px!important}.products{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;padding:10px 14px 8px}.package{display:flex;align-items:center;justify-content:space-between;border:1px solid #e4eaf4;border-radius:9px;padding:9px 12px;gap:8px}.package:hover{border-color:#94b4f5;background:#f9fbff}.package>div{display:flex;flex-direction:column;gap:6px}.package strong{font-size:20px;color:#27364e}.package small{display:block;font-size:10px;font-weight:400;color:#8390a4;margin-top:3px}.package span{font-size:11px;color:#6c7c94}.package button{font-size:11px!important;border:0;border-radius:7px;padding:9px 10px;background:#edf3ff;color:#2c62df;white-space:nowrap}.rule{margin:0 14px 10px;font-size:10px;color:#8a97aa;line-height:1.6}.workspace{display:grid;grid-template-columns:1.2fr 1fr;gap:14px;margin-top:12px}.alert{display:flex;justify-content:space-between;align-items:center;border:1px solid #cae0ff;background:#edf5ff;color:#356398;border-radius:8px;font-size:12px;padding:10px 14px;margin:0 0 12px;gap:12px}.alert button{color:inherit;border:0;background:transparent;font-size:11px}.error{background:#fff1ef;border-color:#f5d1cc;color:#b14a3c}.empty{color:#8997aa;text-align:center;padding:36px;font-size:13px}footer{font-size:10px;color:#919daf;display:flex;justify-content:space-between;gap:14px;padding:15px 0 18px;line-height:1.6}@media(min-width:1500px){main{padding-top:24px}.products{gap:12px}.package{padding:15px}}@media(max-width:1050px){.workspace{grid-template-columns:1fr}.nav{gap:15px}.identity .role{display:none}.products{grid-template-columns:repeat(4,minmax(0,1fr))}.package{flex-direction:column;align-items:stretch;gap:10px}.package small{display:inline;margin-left:4px}}@media(max-width:680px){main{padding:15px 14px 0}.nav{height:auto;min-height:54px;flex-wrap:wrap;padding:12px 14px;gap:10px}nav{order:3;width:100%;justify-content:space-between}nav button{padding:8px!important;font-size:12px!important}.page-heading{align-items:flex-start;flex-direction:column;gap:10px}.identity{width:100%;justify-content:space-between}.metrics{grid-template-columns:1fr 1fr;gap:8px}.metrics>div{padding:12px}.metrics strong{font-size:19px}.products{grid-template-columns:repeat(2,minmax(0,1fr));padding:12px;gap:8px}.package{flex-direction:row;align-items:center;padding:12px 10px}.package small{display:block;margin-left:0}.panel-heading{padding:13px}.panel-heading>span{max-width:50%;text-align:right}.workspace{margin-top:12px;gap:12px}footer{flex-direction:column;gap:4px}h1{font-size:22px}}
+@media(min-width:1100px) and (max-height:850px){.products{grid-template-columns:repeat(8,minmax(0,1fr))}.package{flex-direction:column;align-items:stretch;gap:7px;padding:10px}.package small{display:inline;font-size:9px;margin-left:3px}.package strong{font-size:18px}.page-heading{margin-bottom:10px}.metrics{margin-bottom:10px}}
 </style>

@@ -13,7 +13,7 @@ const modal = ref<HTMLElement | null>(null), requestID = crypto.randomUUID(), co
 let timer: ReturnType<typeof setTimeout> | undefined, disposed = false, paidEmitted = false, polling = false, pollCount = 0
 let previousFocus: Element | null, previousOverflow = ''
 const amount = computed(() => ((order.value?.amount_cents ?? props.product?.amount_cents ?? 0) / 100).toFixed(2))
-const credit = computed(() => Number(order.value?.credit ?? props.product?.credit ?? 0))
+const credit = computed(() => Number(order.value?.credited_credit ?? order.value?.credit ?? props.product?.credit ?? 0))
 const title = computed(() => props.product?.name || `${credit.value} 刀额度`)
 const channelName = computed(() => channel.value === 'wxpay' ? '微信' : '支付宝')
 function message(e: any) { return e?.response?.data?.message || e?.message || '网络暂时不可用，请稍后重试' }
@@ -109,12 +109,12 @@ onUnmounted(() => {
           <label :class="{ selected: channel === 'alipay' }"><input v-model="channel" :disabled="attempted" type="radio" name="checkout-channel" value="alipay"><i class="alipay">支</i><span>支付宝</span><b>{{ channel === 'alipay' ? '●' : '○' }}</b></label>
           <label :class="{ selected: channel === 'wxpay' }"><input v-model="channel" :disabled="attempted" type="radio" name="checkout-channel" value="wxpay"><i class="wxpay">微</i><span>微信支付</span><b>{{ channel === 'wxpay' ? '●' : '○' }}</b></label>
         </fieldset>
-        <p class="footnote">支付完成后，额度将自动加入当前账号。</p>
+        <p class="footnote">支付确认后按实付金额折算到账，少付也会自动入账。</p>
         <div v-if="error" class="error" role="alert">{{ error }}</div>
         <button class="primary" :disabled="submitting" @click="submit">提交订单</button>
       </template>
       <template v-else-if="phase === 'success'">
-        <div class="result"><div class="success-icon">✓</div><h2 id="checkout-title">充值成功</h2><p>支付已确认，<strong>${{ credit }} USD</strong> 额度已自动到账。</p><code>{{ order?.id }}</code><button class="primary" @click="close">完成</button></div>
+        <div class="result"><div class="success-icon">✓</div><h2 id="checkout-title">充值成功</h2><p>实付 ¥{{ ((order?.paid_amount_cents ?? order?.amount_cents ?? 0) / 100).toFixed(2) }}，<strong>${{ credit }} USD</strong> 额度已自动到账。</p><code>{{ order?.id }}</code><button class="primary" @click="close">完成</button></div>
       </template>
       <template v-else-if="phase === 'expired'">
         <div class="result"><h2 id="checkout-title">{{ order?.reversed_at ? '订单已退款冲正' : '二维码已过期' }}</h2><p>请关闭窗口，在充值记录中查看该订单。</p><code>{{ order?.id }}</code><button class="primary" @click="close">关闭窗口</button></div>

@@ -94,14 +94,14 @@ func testOperations(t *testing.T, s *Service) {
 	if requests.Load() != before {
 		t.Fatal("throttled request reached gateway")
 	}
-	// Underpayment in price cannot be hidden by a matching order money field.
+	// Invalid paid amounts must not be hidden by a matching nominal amount.
 	under := create()
-	g.Price = "4.99"
+	g.Price = "invalid"
 	if e := s.Reconcile(ctx, under.ID, 0, ""); !errors.Is(e, ErrPaymentMismatch) {
-		t.Fatal("underpaid accepted", e)
+		t.Fatal("invalid settlement accepted", e)
 	}
 	if getBalance() != "15.00000000" {
-		t.Fatal("underpaid credited")
+		t.Fatal("invalid settlement credited")
 	}
 	var issueID int64
 	var occurrences int
@@ -149,7 +149,7 @@ func testOperations(t *testing.T, s *Service) {
 		name         string
 		money, price scalar
 		pt           string
-	}{{"overpaid", "5.00", "5.01", "alipay"}, {"order_amount", "4.99", "5.00", "alipay"}, {"missing_price", "5.00", "", "alipay"}, {"payment_type", "5.00", "5.00", "wxpay"}} {
+	}{{"invalid_amount", "invalid", "5.00", "alipay"}, {"missing_price", "5.00", "", "alipay"}, {"payment_type", "5.00", "5.00", "wxpay"}} {
 		t.Run(tc.name, func(t *testing.T) {
 			g.Money = tc.money
 			g.Price = tc.price

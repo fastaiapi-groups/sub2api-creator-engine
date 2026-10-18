@@ -45,8 +45,11 @@ func testCheckout(t *testing.T, s *Service) {
 			if mode == "native" {
 				reply["qrcode"] = "wxp://example-native-code"
 			}
-			if mode == "mismatch" {
+			if mode == "discount" {
 				reply["price"] = "4.99"
+			}
+			if mode == "mismatch" {
+				reply["money"] = "invalid"
 			}
 			if mode == "external" {
 				reply["payurl"] = "http://127.0.0.1/private"
@@ -149,6 +152,11 @@ func testCheckout(t *testing.T, s *Service) {
 	c, e = s.Checkout(ctx, 1, native.ID)
 	if e != nil || c.QRKind != "text" || c.QRCode != "wxp://example-native-code" {
 		t.Fatal("native QR", e, c.QRKind)
+	}
+	mode = "discount"
+	discounted := create("")
+	if c, e = s.Checkout(ctx, 1, discounted.ID); e != nil || c.State != "ready" {
+		t.Fatal("valid quoted channel price variation blocked", e)
 	}
 	mode = "mismatch"
 	wrong := create("")

@@ -27,6 +27,7 @@ func (a *app) rechargeRoute(w http.ResponseWriter, r *http.Request) {
 		success(w, a.recharge.Packages())
 		return
 	}
+	w.Header().Set("Cache-Control", "no-store")
 	uid, ok := a.userID(w, r)
 	if !ok {
 		return
@@ -72,6 +73,8 @@ func (a *app) rechargeRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch {
+	case p == "access" && r.Method == "GET":
+		success(w, map[string]bool{"is_admin": a.recharge.IsAdmin(ctx, uid)})
 	case p == "orders" && r.Method == "POST":
 		var in struct {
 			PackageID   string `json:"package_id"`

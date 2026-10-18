@@ -54,6 +54,12 @@ describe('recharge confirmation and QR checkout', () => {
     const signal = vi.mocked(apiClient.post).mock.calls[0][2]?.signal as AbortSignal
     wrapper.unmount(); expect(signal.aborted).toBe(true); expect(document.body.style.overflow).toBe('')
   })
+  it('shows the actual received credit after partial payment instead of the quoted package', async () => {
+    vi.mocked(apiClient.post).mockResolvedValue({data:{order:{...order,status:'paid',paid_amount_cents:1,credited_credit:'0.01000000'},state:'paid'}})
+    open(order);await flushPromises()
+    expect(wrapper.text()).toContain('实付 ¥0.01');expect(wrapper.text()).toContain('$0.01 USD')
+    expect(wrapper.text()).not.toContain('$5 USD')
+  })
   it('removes QR and stops polling for an expired order', async () => {
     vi.mocked(apiClient.post).mockResolvedValue({ data: { order: { ...order, gateway_status: 'expired' }, state: 'expired', qr_code: 'must-not-show' } })
     open(order); await flushPromises()

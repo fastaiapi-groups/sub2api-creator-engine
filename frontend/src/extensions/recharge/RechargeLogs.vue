@@ -1,0 +1,16 @@
+<script setup lang="ts">
+import { computed, ref, watch } from 'vue'
+import type { Log } from './types'
+const props = withDefaults(defineProps<{ logs: Log[]; pageSize?: number }>(),{pageSize:8})
+const page=ref(1), pages=computed(() => Math.max(1,Math.ceil(props.logs.length/props.pageSize)))
+watch(pages,n => {page.value=Math.min(n,page.value)})
+const rows=computed(() => props.logs.slice((page.value-1)*props.pageSize,page.value*props.pageSize))
+const events:Record<string,string>={credited:'余额已入账',created:'订单创建',exception:'订单异常',recheck_requested:'查询付款',issue_resolved:'异常已处理',refund_registered:'退款已冲正',refund_requested:'退款登记'}
+function detail(l:Log){try{const d=JSON.parse(l.detail);if(l.event==='credited')return `到账 $${Number(d.credit)}${d.paid_amount_cents!=null ? ` · 实付 ¥${(d.paid_amount_cents/100).toFixed(2)}` : ''} · 余额 $${Number(d.balance_after)}`;if(l.event==='refund_registered')return `扣回 $${Number(d.debit)} · ${d.reason}`;if(d.reason)return d.reason}catch{}return l.detail}
+function reference(l:Log){try{const d=JSON.parse(l.detail);return d.trade_no ? `流水 ${d.trade_no}` : d.refund_reference ? `退款凭证 ${d.refund_reference}` : ''}catch{return ''}}
+const time=(s:string)=>new Date(s).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})
+</script>
+<template><div class="log-list"><div v-for="l in rows" :key="l.order_id+l.event+l.created_at" class="log-row"><span class="dot" :class="{green:l.event==='credited',red:l.event==='exception'}"></span><div class="log-copy"><div class="log-title"><strong :class="{green:l.event==='credited'}">{{ events[l.event] || l.event }}</strong><time>{{ time(l.created_at) }}</time></div><p :title="l.detail">{{ detail(l) }}</p><code :title="l.order_id">{{ l.order_id }}<span v-if="reference(l)"> · {{ reference(l) }}</span></code></div></div><p v-if="!logs.length" class="empty">暂无充值日志，创建订单后会自动记录。</p><div class="pagination"><span>共 {{ logs.length }} 条 · {{ page }} / {{ pages }} 页</span><div><button :disabled="page<=1" @click="page--">上一页</button><button :disabled="page>=pages" @click="page++">下一页</button></div></div></div></template>
+<style scoped>
+.log-list{color:#34435b;color-scheme:light}.log-row{display:flex;align-items:flex-start;gap:10px;padding:9px 14px;border-bottom:1px solid #f0f3f8;min-height:56px}.dot{margin-top:4px;flex-shrink:0;width:7px;height:7px;background:#c2ccdc;border-radius:50%}.dot.green{background:#2db37d}.dot.red{background:#e78369}.log-copy{min-width:0;flex:1}.log-title{display:flex;align-items:center;justify-content:space-between;gap:8px}strong{color:#465874;font-size:11px;font-weight:600}.green{color:#239c68}time{font-size:10px;color:#98a5b6;white-space:nowrap}p{margin:5px 0 3px;font-size:11px;color:#657893;line-height:1.5;overflow-wrap:anywhere}code{display:block;color:#9aa7b9;font-size:9px;overflow-wrap:anywhere}.pagination{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;font-size:10px;color:#92a0b3;gap:10px}.pagination>div{display:flex;gap:5px}button{font-size:10px;color:#647896;background:white;border:1px solid #e2e9f4;padding:4px 8px;border-radius:5px;cursor:pointer}button:disabled{opacity:.35;cursor:not-allowed}.empty{padding:25px 14px;text-align:center;font-size:12px;color:#8c9bb0;margin:0}
+</style>

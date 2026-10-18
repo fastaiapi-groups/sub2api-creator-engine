@@ -101,10 +101,10 @@ func (s *Service) validateNotification(o Order, v url.Values) error {
 	if v.Get("pid") != s.cfg.PID || v.Get("trade_status") != "TRADE_SUCCESS" || v.Get("trade_no") == "" || len(v.Get("trade_no")) > 128 {
 		return ErrPaymentFields
 	}
-	if n != o.AmountCents || v.Get("type") != o.PaymentType {
+	if n <= 0 || v.Get("type") != o.PaymentType {
 		return ErrPaymentMismatch
 	}
-	if o.Status == "paid" && o.TradeNo.String != v.Get("trade_no") {
+	if o.TradeNo.Valid && o.TradeNo.String != v.Get("trade_no") {
 		return ErrTradeConflict
 	}
 	return nil
@@ -149,15 +149,22 @@ func (s *Service) verifyAndCredit(ctx context.Context, o Order, expectedTrade st
 	}
 	n, e := parseMoney(string(g.Money))
 	price, pe := parseMoney(string(g.Price))
-	if e != nil || pe != nil || n != o.AmountCents || price != o.AmountCents || g.Type != o.PaymentType {
-		s.recordIssue(ctx, o.ID, "payment_mismatch", fmt.Sprintf("应付 %s 元，平台订单金额 %s 元，支付金额 %s 元；金额或支付方式不一致，暂停入账", money(o.AmountCents), safeMoney(g.Money), safeMoney(g.Price)))
+	if pe == nil && price == 0 {
+		return ErrUnpaid
+	}
+	if e != nil || pe != nil || n <= 0 || price <= 0 || g.Type != o.PaymentType {
+		s.recordIssue(ctx, o.ID, "payment_mismatch", fmt.Sprintf("应付 %s 元，平台订单金额 %s 元，支付金额 %s 元；订单信息无效或支付方式不一致，暂停入账", money(o.AmountCents), safeMoney(g.Money), safeMoney(g.Price)))
 		return ErrPaymentMismatch
 	}
 	if (expectedTrade != "" && string(g.TradeNo) != expectedTrade) || (o.TradeNo.Valid && string(g.TradeNo) != o.TradeNo.String) || len(g.TradeNo) > 128 {
 		s.recordIssue(ctx, o.ID, "trade_conflict", "支付通知、本地订单与平台流水不一致，暂停入账")
 		return ErrTradeConflict
 	}
-	v := url.Values{"pid": {s.cfg.PID}, "out_trade_no": {o.ID}, "trade_no": {string(g.TradeNo)}, "money": {string(g.Money)}, "type": {g.Type}, "trade_status": {"TRADE_SUCCESS"}}
+	if o.Status == "paid" && o.PaidAmountCents != nil && *o.PaidAmountCents != price {
+		s.recordIssue(ctx, o.ID, "settlement_changed", "已入账订单的渠道实付金额发生变化，不会重复增加余额")
+		return ErrPaymentMismatch
+	}
+	v := url.Values{"pid": {s.cfg.PID}, "out_trade_no": {o.ID}, "trade_no": {string(g.TradeNo)}, "money": {money(o.AmountCents)}, "paid_money": {string(g.Price)}, "type": {g.Type}, "trade_status": {"TRADE_SUCCESS"}}
 	if err = s.credit(ctx, v); err != nil {
 		s.recordIssue(ctx, o.ID, "credit_failed", "平台确认收款，但本地入账失败；请检查数据库、用户状态或流水唯一性，后台将继续重试")
 		return err

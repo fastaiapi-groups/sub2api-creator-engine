@@ -152,12 +152,12 @@ func (s *Service) Checkout(ctx context.Context, uid int64, id string) (Checkout,
 		s.checkoutUncertain(id)
 		return c, ErrCheckoutPending
 	}
-	for _, value := range []scalar{reply.Money, reply.Price} {
+	for _, value := range []scalar{reply.Money} {
 		if value != "" {
 			n, e := parseMoney(string(value))
 			if e != nil || n != c.Order.AmountCents {
 				s.db.ExecContext(ctx, `UPDATE sub_adds_recharge_orders SET payment_state='blocked' WHERE id=$1`, id)
-				s.recordIssue(ctx, id, "payment_mismatch", "渠道创建订单时返回的金额与应付金额不一致，暂停展示二维码")
+				s.recordIssue(ctx, id, "payment_mismatch", "渠道创建订单时返回的应付金额无效或与本地报价不符，暂停展示二维码")
 				return c, ErrPaymentMismatch
 			}
 		}
@@ -197,8 +197,7 @@ func (s *Service) recoverPayment(ctx context.Context, o Order) (Checkout, error)
 		return c, ErrCheckoutPending
 	}
 	n, ne := parseMoney(string(g.Money))
-	price, pe := parseMoney(string(g.Price))
-	if ne != nil || pe != nil || n != o.AmountCents || price != o.AmountCents || g.Type != o.PaymentType {
+	if ne != nil || n <= 0 || g.Type != o.PaymentType {
 		return c, ErrPaymentMismatch
 	}
 	if g.Status == "1" {

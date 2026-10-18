@@ -13,6 +13,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -30,19 +31,21 @@ type Service struct {
 	client *http.Client
 }
 type Order struct {
-	ID            string         `json:"id"`
-	UserID        int64          `json:"-"`
-	PackageID     string         `json:"package_id"`
-	AmountCents   int64          `json:"amount_cents"`
-	Credit        string         `json:"credit"`
-	PaymentType   string         `json:"payment_type"`
-	Status        string         `json:"status"`
-	TradeNo       sql.NullString `json:"-"`
-	CreatedAt     time.Time      `json:"created_at"`
-	PaidAt        *time.Time     `json:"paid_at"`
-	LastCheckedAt *time.Time     `json:"last_checked_at"`
-	GatewayStatus string         `json:"gateway_status"`
-	ReversedAt    *time.Time     `json:"reversed_at"`
+	PaidAmountCents *int64         `json:"paid_amount_cents"`
+	CreditedCredit  *string        `json:"credited_credit"`
+	ID              string         `json:"id"`
+	UserID          int64          `json:"-"`
+	PackageID       string         `json:"package_id"`
+	AmountCents     int64          `json:"amount_cents"`
+	Credit          string         `json:"credit"`
+	PaymentType     string         `json:"payment_type"`
+	Status          string         `json:"status"`
+	TradeNo         sql.NullString `json:"-"`
+	CreatedAt       time.Time      `json:"created_at"`
+	PaidAt          *time.Time     `json:"paid_at"`
+	LastCheckedAt   *time.Time     `json:"last_checked_at"`
+	GatewayStatus   string         `json:"gateway_status"`
+	ReversedAt      *time.Time     `json:"reversed_at"`
 }
 
 func New(ctx context.Context, c Config) (*Service, error) {
@@ -72,17 +75,23 @@ func New(ctx context.Context, c Config) (*Service, error) {
 	}
 	return s, nil
 }
+func (o Order) settledCredit() string {
+	if o.CreditedCredit != nil {
+		return *o.CreditedCredit
+	}
+	return o.Credit
+}
 func (s *Service) Close()              { s.db.Close(); s.redis.Close() }
 func (s *Service) Packages() []Package { return s.cfg.Packages }
 func orderTargets(o *Order) []any {
-	return []any{&o.ID, &o.UserID, &o.PackageID, &o.AmountCents, &o.Credit, &o.PaymentType, &o.Status, &o.TradeNo, &o.CreatedAt, &o.PaidAt, &o.LastCheckedAt, &o.GatewayStatus, &o.ReversedAt}
+	return []any{&o.ID, &o.UserID, &o.PackageID, &o.AmountCents, &o.Credit, &o.PaymentType, &o.Status, &o.TradeNo, &o.CreatedAt, &o.PaidAt, &o.LastCheckedAt, &o.GatewayStatus, &o.ReversedAt, &o.PaidAmountCents, &o.CreditedCredit}
 }
 func scanOrder(row interface{ Scan(...any) error }) (o Order, err error) {
 	err = row.Scan(orderTargets(&o)...)
 	return
 }
 
-const fields = `id,user_id,package_id,amount_cents,credit::text,payment_type,status,trade_no,created_at,paid_at,last_checked_at,gateway_status,reversed_at`
+const fields = `id,user_id,package_id,amount_cents,credit::text,payment_type,status,trade_no,created_at,paid_at,last_checked_at,gateway_status,reversed_at,paid_amount_cents,credited_credit::text`
 
 func (s *Service) Create(ctx context.Context, uid int64, pid, pt string) (Order, error) {
 	return s.CreateWithKey(ctx, uid, pid, pt, "")
@@ -185,6 +194,9 @@ func (s *Service) Logs(ctx context.Context, uid int64) ([]map[string]any, error)
 	}
 	return out, rows.Err()
 }
+
+// credit receives only server-verified settlement values from verifyAndCredit.
+// Never pass a raw HTTP notification or browser payload to this method.
 func (s *Service) credit(ctx context.Context, v url.Values) error {
 	cents, err := parseMoney(v.Get("money"))
 	if err != nil {
@@ -208,24 +220,42 @@ func (s *Service) credit(ctx context.Context, v url.Values) error {
 	if o.TradeNo.Valid && o.TradeNo.String != v.Get("trade_no") {
 		return ErrTradeConflict
 	}
+	paidCents := cents
+	if v.Get("paid_money") != "" {
+		paidCents, err = parseMoney(v.Get("paid_money"))
+		if err != nil || paidCents <= 0 {
+			return ErrPaymentMismatch
+		}
+	}
 	if o.Status == "paid" {
+		if o.PaidAmountCents != nil && *o.PaidAmountCents != paidCents {
+			return ErrPaymentMismatch
+		}
 		return nil
 	}
+	var credited string
+	// PostgreSQL numeric arithmetic avoids float rounding and snapshots the quote's rate.
+	if err = tx.QueryRowContext(ctx, `SELECT trunc($1::numeric*$2::numeric/$3::numeric,8)::text`, o.Credit, paidCents, o.AmountCents).Scan(&credited); err != nil {
+		return err
+	}
+	if strings.Trim(credited, "0.") == "" {
+		return ErrPaymentMismatch
+	}
 	var balance string
-	err = tx.QueryRowContext(ctx, `UPDATE users SET balance=balance+$1::numeric,updated_at=now() WHERE id=$2 AND deleted_at IS NULL RETURNING balance::text`, o.Credit, o.UserID).Scan(&balance)
+	err = tx.QueryRowContext(ctx, `UPDATE users SET balance=balance+$1::numeric,updated_at=now() WHERE id=$2 AND deleted_at IS NULL RETURNING balance::text`, credited, o.UserID).Scan(&balance)
 	if err != nil {
 		return err
 	}
 	// Populate the official recharge history in the same transaction.
-	_, err = tx.ExecContext(ctx, `INSERT INTO redeem_codes(code,type,value,status,used_by,used_at,created_at) VALUES($1,'balance',$2,'used',$3,now(),now())`, o.ID, o.Credit, o.UserID)
+	_, err = tx.ExecContext(ctx, `INSERT INTO redeem_codes(code,type,value,status,used_by,used_at,created_at) VALUES($1,'balance',$2,'used',$3,now(),now())`, o.ID, credited, o.UserID)
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE sub_adds_recharge_orders SET status='paid',trade_no=$2,paid_at=now(),cache_version=cache_version+1 WHERE id=$1`, o.ID, v.Get("trade_no"))
+	_, err = tx.ExecContext(ctx, `UPDATE sub_adds_recharge_orders SET status='paid',trade_no=$2,paid_at=now(),cache_version=cache_version+1,paid_amount_cents=$3,credited_credit=$4 WHERE id=$1`, o.ID, v.Get("trade_no"), paidCents, credited)
 	if err != nil {
 		return err
 	}
-	detail, _ := json.Marshal(map[string]string{"credit": o.Credit, "balance_after": balance, "trade_no": v.Get("trade_no")})
+	detail, _ := json.Marshal(map[string]any{"credit": credited, "balance_after": balance, "trade_no": v.Get("trade_no"), "paid_amount_cents": paidCents, "quoted_amount_cents": o.AmountCents, "quoted_credit": o.Credit})
 	_, err = tx.ExecContext(ctx, `INSERT INTO sub_adds_recharge_logs(order_id,event,detail) VALUES($1,'credited',$2)`, o.ID, string(detail))
 	if err != nil {
 		return err
