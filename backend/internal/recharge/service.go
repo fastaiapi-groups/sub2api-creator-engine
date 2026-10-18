@@ -13,7 +13,6 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -86,6 +85,12 @@ func scanOrder(row interface{ Scan(...any) error }) (o Order, err error) {
 const fields = `id,user_id,package_id,amount_cents,credit::text,payment_type,status,trade_no,created_at,paid_at,last_checked_at,gateway_status,reversed_at`
 
 func (s *Service) Create(ctx context.Context, uid int64, pid, pt string) (Order, error) {
+	return s.CreateWithKey(ctx, uid, pid, pt, "")
+}
+func (s *Service) CreateWithKey(ctx context.Context, uid int64, pid, pt, key string) (Order, error) {
+	if key != "" && !requestKeyPattern.MatchString(key) {
+		return Order{}, ErrConflict
+	}
 	if pt != "alipay" && pt != "wxpay" {
 		return Order{}, fmt.Errorf("请选择支付宝或微信支付")
 	}
@@ -114,6 +119,18 @@ func (s *Service) Create(ctx context.Context, uid int64, pid, pt string) (Order,
 	if err = tx.QueryRowContext(ctx, `SELECT id FROM users WHERE id=$1 AND deleted_at IS NULL AND status='active' FOR UPDATE`, uid).Scan(&exists); err != nil {
 		return Order{}, err
 	}
+	if key != "" {
+		existing, e := scanOrder(tx.QueryRowContext(ctx, `SELECT `+fields+` FROM sub_adds_recharge_orders WHERE user_id=$1 AND request_key=$2`, uid, key))
+		if e == nil {
+			if existing.PackageID != pid || existing.PaymentType != pt {
+				return Order{}, ErrConflict
+			}
+			return existing, tx.Commit()
+		}
+		if !errors.Is(e, sql.ErrNoRows) {
+			return Order{}, e
+		}
+	}
 	var count int
 	err = tx.QueryRowContext(ctx, `SELECT count(*) FROM sub_adds_recharge_orders WHERE user_id=$1 AND status='pending' AND created_at>now()-interval '1 hour'`, uid).Scan(&count)
 	if err != nil {
@@ -122,7 +139,7 @@ func (s *Service) Create(ctx context.Context, uid int64, pid, pt string) (Order,
 	if count >= 20 {
 		return Order{}, ErrPendingLimit
 	}
-	o, err := scanOrder(tx.QueryRowContext(ctx, `INSERT INTO sub_adds_recharge_orders(id,user_id,package_id,amount_cents,credit,payment_type) VALUES($1,$2,$3,$4,$5,$6) RETURNING `+fields, id, uid, p.ID, p.AmountCents, p.Credit, pt))
+	o, err := scanOrder(tx.QueryRowContext(ctx, `INSERT INTO sub_adds_recharge_orders(id,user_id,package_id,amount_cents,credit,payment_type,request_key,payment_state) VALUES($1,$2,$3,$4,$5,$6,NULLIF($7,''),'new') RETURNING `+fields, id, uid, p.ID, p.AmountCents, p.Credit, pt, key))
 	if err != nil {
 		return o, err
 	}
@@ -131,12 +148,6 @@ func (s *Service) Create(ctx context.Context, uid int64, pid, pt string) (Order,
 		return o, err
 	}
 	return o, tx.Commit()
-}
-func (s *Service) PaymentURL(o Order) string {
-	v := url.Values{"pid": {s.cfg.PID}, "type": {o.PaymentType}, "out_trade_no": {o.ID}, "name": {"API 余额充值"}, "money": {money(o.AmountCents)}, "notify_url": {s.cfg.PublicURL + "/fastaiapi/api/recharge/notify"}, "return_url": {s.cfg.PublicURL + "/fastaiui/recharge?order=" + url.QueryEscape(o.ID)}}
-	v.Set("sign", Sign(v, s.cfg.Key))
-	v.Set("sign_type", "MD5")
-	return strings.TrimRight(s.cfg.Gateway, "/") + "/submit.php?" + v.Encode()
 }
 func (s *Service) Get(ctx context.Context, uid int64, id string) (Order, error) {
 	return scanOrder(s.db.QueryRowContext(ctx, `SELECT `+fields+` FROM sub_adds_recharge_orders WHERE id=$1 AND user_id=$2`, id, uid))
@@ -194,10 +205,10 @@ func (s *Service) credit(ctx context.Context, v url.Values) error {
 	if o.AmountCents != cents || o.PaymentType != v.Get("type") {
 		return ErrPaymentMismatch
 	}
+	if o.TradeNo.Valid && o.TradeNo.String != v.Get("trade_no") {
+		return ErrTradeConflict
+	}
 	if o.Status == "paid" {
-		if o.TradeNo.String != v.Get("trade_no") {
-			return ErrTradeConflict
-		}
 		return nil
 	}
 	var balance string

@@ -106,9 +106,9 @@ func TestRechargeAuthorization(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	for _, path := range []string{"orders/" + other.ID, "orders/" + other.ID + "/recheck"} {
+	for _, path := range []string{"orders/" + other.ID, "orders/" + other.ID + "/recheck", "orders/" + other.ID + "/checkout"} {
 		method := "GET"
-		if strings.HasSuffix(path, "/recheck") {
+		if strings.HasSuffix(path, "/recheck") || strings.HasSuffix(path, "/checkout") {
 			method = "POST"
 		}
 		if r := request(method, path, "user", ""); r.Code != 404 {

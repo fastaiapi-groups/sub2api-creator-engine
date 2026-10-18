@@ -69,8 +69,7 @@ func TestPaymentIntegration(t *testing.T) {
 	if _, e = s.Get(ctx, 2, o.ID); e != sql.ErrNoRows {
 		t.Fatal("order ownership broken", e)
 	}
-	u, _ := url.Parse(s.PaymentURL(o))
-	if !validSignature(u.Query(), c.Key) {
+	if !validSignature(s.paymentParams(o), c.Key) {
 		t.Fatal("payment URL signature")
 	}
 	bad := callback(o, "trade1")
@@ -187,6 +186,7 @@ func TestPaymentIntegration(t *testing.T) {
 		t.Fatal("retry failed", synced, balance())
 	}
 	t.Log("concurrent callbacks, ownership, atomic rollback, cache invalidation and recovery verified")
+	t.Run("checkout", func(t *testing.T) { testCheckout(t, s) })
 	t.Run("operations", func(t *testing.T) { testOperations(t, s) })
 }
 

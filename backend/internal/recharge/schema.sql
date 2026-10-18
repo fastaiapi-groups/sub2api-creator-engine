@@ -31,3 +31,13 @@ CREATE TABLE IF NOT EXISTS sub_adds_recharge_issues (
 CREATE INDEX IF NOT EXISTS sub_adds_recharge_open_issues ON sub_adds_recharge_issues(updated_at DESC) WHERE resolved_at IS NULL;
 ALTER TABLE sub_adds_recharge_issues ADD COLUMN IF NOT EXISTS alert_generation bigint NOT NULL DEFAULT 1;
 ALTER TABLE sub_adds_recharge_orders ADD COLUMN IF NOT EXISTS cache_version bigint NOT NULL DEFAULT 0;
+
+-- Existing redirect-based orders are kept as legacy; only new orders may call mapi.php.
+ALTER TABLE sub_adds_recharge_orders ADD COLUMN IF NOT EXISTS request_key text;
+CREATE UNIQUE INDEX IF NOT EXISTS sub_adds_recharge_request_key ON sub_adds_recharge_orders(user_id,request_key) WHERE request_key IS NOT NULL;
+ALTER TABLE sub_adds_recharge_orders ADD COLUMN IF NOT EXISTS payment_state text NOT NULL DEFAULT 'legacy';
+ALTER TABLE sub_adds_recharge_orders ADD COLUMN IF NOT EXISTS payment_requested_at timestamptz;
+ALTER TABLE sub_adds_recharge_orders ADD COLUMN IF NOT EXISTS payment_source text NOT NULL DEFAULT '';
+ALTER TABLE sub_adds_recharge_orders ADD COLUMN IF NOT EXISTS payment_source_kind text NOT NULL DEFAULT '';
+ALTER TABLE sub_adds_recharge_orders ADD COLUMN IF NOT EXISTS payment_qr text NOT NULL DEFAULT '';
+ALTER TABLE sub_adds_recharge_orders ADD COLUMN IF NOT EXISTS payment_qr_kind text NOT NULL DEFAULT '';

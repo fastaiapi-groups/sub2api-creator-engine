@@ -31,7 +31,11 @@ func (a *app) rechargeRoute(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	timeout := 15 * time.Second
+	if strings.HasSuffix(p, "/checkout") {
+		timeout = 30 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 	result := func(v any, err error) {
 		if err != nil {
@@ -42,6 +46,8 @@ func (a *app) rechargeRoute(w http.ResponseWriter, r *http.Request) {
 				failText(w, 429, err.Error())
 			} else if errors.Is(err, recharge.ErrRefundBalance) || errors.Is(err, recharge.ErrConflict) {
 				failText(w, 409, err.Error())
+			} else if errors.Is(err, recharge.ErrQRCodeUnavailable) {
+				failText(w, 502, err.Error())
 			} else if errors.Is(err, recharge.ErrGatewayOrderMissing) {
 				failText(w, 502, "支付平台暂未查到该订单，未增加余额，请稍后重试")
 			} else if errors.Is(err, recharge.ErrQuery) {
@@ -70,6 +76,7 @@ func (a *app) rechargeRoute(w http.ResponseWriter, r *http.Request) {
 		var in struct {
 			PackageID   string `json:"package_id"`
 			PaymentType string `json:"payment_type"`
+			RequestID   string `json:"request_id"`
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 4096)
 		if json.NewDecoder(r.Body).Decode(&in) != nil {
@@ -86,18 +93,33 @@ func (a *app) rechargeRoute(w http.ResponseWriter, r *http.Request) {
 			failText(w, 400, "套餐或支付方式无效")
 			return
 		}
-		o, err := a.recharge.Create(ctx, uid, in.PackageID, in.PaymentType)
+		o, err := a.recharge.CreateWithKey(ctx, uid, in.PackageID, in.PaymentType, in.RequestID)
 		if err != nil {
 			result(nil, err)
 			return
 		}
-		success(w, map[string]any{"order": o, "payment_url": a.recharge.PaymentURL(o)})
+		success(w, map[string]any{"order": o})
 	case p == "orders" && r.Method == "GET":
 		v, e := a.recharge.List(ctx, uid)
 		result(v, e)
 	case p == "logs" && r.Method == "GET":
 		v, e := a.recharge.Logs(ctx, uid)
 		result(v, e)
+	case strings.HasPrefix(p, "orders/") && strings.HasSuffix(p, "/checkout") && r.Method == "POST":
+		id := strings.TrimSuffix(strings.TrimPrefix(p, "orders/"), "/checkout")
+		c, e := a.recharge.Checkout(ctx, uid, id)
+		if errors.Is(e, recharge.ErrCheckoutPending) {
+			current, readErr := a.recharge.Payment(ctx, uid, id)
+			if readErr != nil {
+				result(nil, readErr)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			success(w, current)
+			return
+		}
+		result(c, e)
 	case strings.HasPrefix(p, "orders/") && strings.HasSuffix(p, "/recheck") && r.Method == "POST":
 		id := strings.TrimSuffix(strings.TrimPrefix(p, "orders/"), "/recheck")
 		o, e := a.recharge.Get(ctx, uid, id)
@@ -117,16 +139,8 @@ func (a *app) rechargeRoute(w http.ResponseWriter, r *http.Request) {
 		o, e = a.recharge.Get(ctx, uid, id)
 		result(o, e)
 	case strings.HasPrefix(p, "orders/") && r.Method == "GET":
-		o, e := a.recharge.Get(ctx, uid, strings.TrimPrefix(p, "orders/"))
-		if e != nil {
-			result(nil, e)
-			return
-		}
-		v := map[string]any{"order": o}
-		if o.Status == "pending" {
-			v["payment_url"] = a.recharge.PaymentURL(o)
-		}
-		success(w, v)
+		c, e := a.recharge.Payment(ctx, uid, strings.TrimPrefix(p, "orders/"))
+		result(c, e)
 	default:
 		method(w)
 	}
