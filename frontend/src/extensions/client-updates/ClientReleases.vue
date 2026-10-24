@@ -27,7 +27,7 @@ async function copy(hash:string){try{await navigator.clipboard.writeText(hash);n
 </script>
 <template>
 <div class="client-release-page">
- <header><a class="brand" href="/fastaiui/downloads/codexplus"><span>F</span> FastAiApi <small>客户端</small></a><nav><a href="/fastaiui/recharge">充值中心</a><a v-if="admin" href="/fastaiui/downloads/codexplus">下载页面 ↗</a><a v-else href="/fastaiui/admin/client-releases">版本管理</a></nav></header>
+ <header><a class="brand" href="/fastaiui/downloads/codexplus"><span>F</span> FastAiApi <small>客户端</small></a><nav><a href="/fastaiui/recharge">充值中心</a><a v-if="admin" href="/fastaiui/downloads/codexplus">下载页面 ↗</a><a v-else href="https://ui.fastaiapi.cloud/help/codex/" target="_blank" rel="noopener noreferrer">帮助手册</a></nav></header>
  <main>
   <section class="hero"><div><span class="eyebrow">FASTAIAPI · {{admin?'RELEASE CENTER':'DESKTOP CLIENT'}}</span><h1>{{admin?'客户端版本发布':'把创作带到你的桌面'}}</h1><p>{{admin?'从草稿到发布，安装包与更新清单统一管理。':'FastAiApi 定制 Codex++，连接模型服务，专注每一次创作。'}}</p></div><span class="version-chip">{{current?'稳定版 '+current.version:'暂未发布正式版本'}}</span></section>
   <p v-if="loading" class="notice" role="status">正在加载版本信息…</p><p v-if="error" class="notice error" role="alert">{{error}}</p><p v-if="notice" class="notice" role="status">{{notice}}</p>
