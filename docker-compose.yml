@@ -22,6 +22,9 @@ services:
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-sub_adds}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DB:-sub_adds}?sslmode=disable
       FASTAIAPI_BASE_URL: ${FASTAIAPI_BASE_URL:-https://fastaiapi.cloud}
+      CLIENT_UPDATES_ENABLED: ${CLIENT_UPDATES_ENABLED:-false}
+      CLIENT_UPDATES_DIR: /data/client-updates
+      CLIENT_UPDATES_PUBLIC_KEY: ${CLIENT_UPDATES_PUBLIC_KEY:-}
       RECHARGE_ENABLED: ${RECHARGE_ENABLED:-false}
       RECHARGE_PUBLIC_URL: ${RECHARGE_PUBLIC_URL:-}
       RECHARGE_GATEWAY: ${RECHARGE_GATEWAY:-https://pay.1kexiu.xyz}
@@ -32,6 +35,7 @@ services:
       RECHARGE_PACKAGES: ${RECHARGE_PACKAGES:-}
       SUB2API_DATABASE_URL: ${SUB2API_DATABASE_URL:-}
       SUB2API_REDIS_URL: ${SUB2API_REDIS_URL:-}
+    volumes: [client-updates:/data/client-updates]
     ports: ["${SUB_ADDS_BACKEND_PORT:-4455}:8080"]
     depends_on: [postgres, redis]
   ui:
@@ -40,5 +44,6 @@ services:
     ports: ["${SUB_ADDS_FRONTEND_PORT:-4445}:80"]
     depends_on: [api]
 volumes:
+  client-updates:
   sub-adds-postgres:
   sub-adds-redis:

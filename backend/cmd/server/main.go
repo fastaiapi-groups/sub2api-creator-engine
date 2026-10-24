@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sub-adds/backend/internal/chatimage"
 	"sub-adds/backend/internal/chatimage/gallery"
+	"sub-adds/backend/internal/clientupdates"
 	"sub-adds/backend/internal/recharge"
 	"time"
 )
@@ -30,6 +31,7 @@ type app struct {
 	conversations *chatimage.SQLRepository
 	recharge      *recharge.Service
 	gallery       *gallery.SQLRepository
+	updates       *clientupdates.Service
 }
 
 func main() {
@@ -56,7 +58,26 @@ func main() {
 		defer a.recharge.Close()
 		go a.recharge.Run(context.Background())
 	}
+	if os.Getenv("CLIENT_UPDATES_ENABLED") == "true" {
+		public, err := clientupdates.ParsePublic(os.Getenv("CLIENT_UPDATES_PUBLIC_KEY"))
+		if err != nil {
+			log.Fatal(err)
+		}
+		admin, err := sql.Open("pgx", os.Getenv("SUB2API_DATABASE_URL"))
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer admin.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		a.updates, err = clientupdates.New(ctx, db, admin, os.Getenv("CLIENT_UPDATES_DIR"), public)
+		cancel()
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
 	m := http.NewServeMux()
+	m.HandleFunc("/api/client-updates/", a.clientUpdates)
+	m.HandleFunc("/downloads/codexplus/", a.clientDownload)
 	m.HandleFunc("/api/recharge/", a.rechargeRoute)
 	m.HandleFunc("/health", a.health)
 	m.HandleFunc("/api/proxy/", a.proxy)
