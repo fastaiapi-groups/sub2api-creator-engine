@@ -34,7 +34,7 @@
 COMPOSE_FILE=docker-compose.yml:compose.production.yml:compose.client-updates.yml ./restart.sh
 ```
 
-仅更新下载页面时使用 `./restart.sh --service ui`，入口会保留本目录的上述叠加配置，只构建和更新前端，不重建 API、数据库及 Redis。已快进至确认提交时可加 `--no-pull`。公开帮助手册使用 <https://home.fastaiapi.cloud/help/codex/>。
+仅更新下载页面时使用 `./restart.sh --service ui`，入口会保留本目录的上述叠加配置，只构建和更新前端，不重建 API、数据库及 Redis。已快进至确认提交时可加 `--no-pull`。公开帮助手册使用 <https://fastaiapi.cloud/help/codex/>。
 
 备份 PostgreSQL 中 `client_releases`、`client_release_channels`、`client_release_audits`，同时备份生产 `client-updates/` 安装包目录、公钥和三个 compose 配置；私钥单独离线备份。包文件不在数据库中，恢复时两者须一致。
 
