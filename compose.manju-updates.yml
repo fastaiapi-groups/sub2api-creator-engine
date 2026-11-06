@@ -1,0 +1,34 @@
+name: manju-updates
+
+services:
+  updates:
+    build: ./backend
+    image: fastaiapi-manju-updates:local
+    container_name: manju-updates-api
+    restart: unless-stopped
+    stop_grace_period: 30m
+    ports:
+      - "4447:8080"
+    environment:
+      DATABASE_URL: ${MANJU_UPDATES_DATABASE_URL:?configure release PostgreSQL}
+      SUB2API_DATABASE_URL: ${MANJU_UPDATES_ADMIN_DATABASE_URL:?configure admin PostgreSQL}
+      FASTAIAPI_BASE_URL: ${MANJU_UPDATES_ACCOUNT_URL:-http://sub2api:8080}
+      CLIENT_UPDATES_ONLY: "true"
+      CLIENT_UPDATES_ENABLED: "false"
+      CLIENT_UPDATES_DIR: /data/client-updates
+      MANJU_UPDATES_SIGNING_KEY_FILE: /run/secrets/manju-release-v1.pem
+      RECHARGE_ENABLED: "false"
+    volumes:
+      - ${MANJU_UPDATES_DATA_DIR:?configure persistent release storage}:/data/client-updates
+      - ${MANJU_UPDATES_KEY_FILE:?configure independent signing key}:/run/secrets/manju-release-v1.pem:ro
+    networks:
+      - releases
+      - accounts
+
+networks:
+  releases:
+    external: true
+    name: ${MANJU_UPDATES_RELEASE_NETWORK:-design_default}
+  accounts:
+    external: true
+    name: ${MANJU_UPDATES_ACCOUNT_NETWORK:-sub2api-deploy_sub2api-network}

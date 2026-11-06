@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"database/sql"
 	"encoding/json"
 	"flag"
@@ -29,25 +30,43 @@ func main() {
 	target := flag.String("target", "", "上传平台")
 	file := flag.String("file", "", "安装包或签名清单")
 	name := flag.String("name", "", "安装包文件名")
+	product := flag.String("product", clientupdates.Product, "产品标识")
+	mandatory := flag.Bool("mandatory", false, "是否强制更新（笑笑漫剧）")
 	out := flag.String("out", "", "清单输出文件")
 	flag.Parse()
-	if os.Getenv("CLIENT_UPDATES_ENABLED") != "true" {
+	if *product != clientupdates.Product && *product != clientupdates.ManjuProduct {
+		must(fmt.Errorf("产品标识无效"))
+	}
+	if *product == clientupdates.Product && os.Getenv("CLIENT_UPDATES_ENABLED") != "true" {
 		must(fmt.Errorf("更新服务未启用"))
 	}
 	db, e := sql.Open("pgx", os.Getenv("DATABASE_URL"))
 	must(e)
 	defer db.Close()
-	public, e := clientupdates.ParsePublic(os.Getenv("CLIENT_UPDATES_PUBLIC_KEY"))
-	must(e)
+	var public ed25519.PublicKey
+	var private ed25519.PrivateKey
+	if *product == clientupdates.ManjuProduct {
+		private, e = clientupdates.LoadSigningKey(os.Getenv("MANJU_UPDATES_SIGNING_KEY_FILE"))
+		must(e)
+		public = private.Public().(ed25519.PublicKey)
+	} else {
+		public, e = clientupdates.ParsePublic(os.Getenv("CLIENT_UPDATES_PUBLIC_KEY"))
+		must(e)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 	service, e := clientupdates.New(ctx, db, nil, os.Getenv("CLIENT_UPDATES_DIR"), public)
 	must(e)
+	service.Product = *product
+	service.SigningKey = private
 	// actor=0 在审计中明确代表服务器运维操作，不冒用站点管理员账号。
 	var result any
 	switch *action {
 	case "create":
-		result, e = service.Create(ctx, 0, *version, *notes, strings.Split(*targets, ","))
+		result, e = service.CreateWithOptions(ctx, 0, *version, *notes, strings.Split(*targets, ","), clientupdates.ReleaseOptions{Mandatory: *mandatory})
+		must(e)
+	case "prepare":
+		result, e = service.Prepare(ctx, *id, 0)
 		must(e)
 	case "upload":
 		parts := strings.Split(*target, "/")

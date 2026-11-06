@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -25,25 +26,39 @@ const schema = `CREATE TABLE IF NOT EXISTS client_releases (
  created_by bigint NOT NULL, published_by bigint, created_at timestamptz NOT NULL DEFAULT now(), published_at timestamptz,
  UNIQUE(product_id,channel,version));
  CREATE TABLE IF NOT EXISTS client_release_channels(product_id text NOT NULL,channel text NOT NULL,release_id bigint REFERENCES client_releases(id),PRIMARY KEY(product_id,channel));
- CREATE TABLE IF NOT EXISTS client_release_audits(id bigserial PRIMARY KEY,release_id bigint NOT NULL,actor bigint NOT NULL,action text NOT NULL,reason text NOT NULL DEFAULT '',created_at timestamptz NOT NULL DEFAULT now());`
+ CREATE TABLE IF NOT EXISTS client_release_audits(id bigserial PRIMARY KEY,release_id bigint NOT NULL,actor bigint NOT NULL,action text NOT NULL,reason text NOT NULL DEFAULT '',created_at timestamptz NOT NULL DEFAULT now());
+ ALTER TABLE client_releases ADD COLUMN IF NOT EXISTS release_options jsonb NOT NULL DEFAULT '{}';
+ CREATE TABLE IF NOT EXISTS client_release_uploads (
+  id text PRIMARY KEY, product_id text NOT NULL, release_id bigint NOT NULL REFERENCES client_releases(id), actor bigint NOT NULL,
+  platform text NOT NULL, arch text NOT NULL, name text NOT NULL, total_bytes bigint NOT NULL, received_bytes bigint NOT NULL DEFAULT 0,
+  complete boolean NOT NULL DEFAULT false, updated_at timestamptz NOT NULL DEFAULT now());`
+
+type ReleaseOptions struct {
+	Mandatory   bool   `json:"mandatory"`
+	RuntimeHash string `json:"runtime_sha256,omitempty"`
+}
 
 type Release struct {
-	ID        int64     `json:"id"`
-	Version   string    `json:"version"`
-	Channel   string    `json:"channel"`
-	Notes     string    `json:"notes"`
-	Status    string    `json:"status"`
-	Assets    []Asset   `json:"assets"`
-	Required  []string  `json:"required_targets"`
-	Envelope  *Envelope `json:"envelope,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	ID        int64          `json:"id"`
+	Product   string         `json:"product_id"`
+	Options   ReleaseOptions `json:"options"`
+	Version   string         `json:"version"`
+	Channel   string         `json:"channel"`
+	Notes     string         `json:"notes"`
+	Status    string         `json:"status"`
+	Assets    []Asset        `json:"assets"`
+	Required  []string       `json:"required_targets"`
+	Envelope  *Envelope      `json:"envelope,omitempty"`
+	CreatedAt time.Time      `json:"created_at"`
 }
 type Service struct {
-	DB      *sql.DB
-	AdminDB *sql.DB
-	Root    string
-	Public  ed25519.PublicKey
-	mu      sync.Mutex
+	DB         *sql.DB
+	AdminDB    *sql.DB
+	Root       string
+	Public     ed25519.PublicKey
+	Product    string
+	SigningKey ed25519.PrivateKey `json:"-"`
+	mu         sync.Mutex
 }
 
 func New(ctx context.Context, db, admin *sql.DB, root string, pub ed25519.PublicKey) (*Service, error) {
@@ -56,7 +71,14 @@ func New(ctx context.Context, db, admin *sql.DB, root string, pub ed25519.Public
 	if _, e := db.ExecContext(ctx, schema); e != nil {
 		return nil, e
 	}
-	return &Service{DB: db, AdminDB: admin, Root: root, Public: pub}, nil
+	return &Service{DB: db, AdminDB: admin, Root: root, Public: pub, Product: Product}, nil
+}
+
+func (s *Service) product() string {
+	if s.Product == "" {
+		return Product
+	}
+	return s.Product
 }
 func (s *Service) IsAdmin(ctx context.Context, uid int64) bool {
 	var ok bool
@@ -67,12 +89,12 @@ func (s *Service) IsAdmin(ctx context.Context, uid int64) bool {
 	return e == nil && ok
 }
 
-const columns = `id,version,channel,notes,status,assets,required_targets,envelope,created_at`
+const columns = `id,version,channel,notes,status,assets,required_targets,envelope,created_at,product_id,release_options`
 
 func scan(row interface{ Scan(...any) error }) (Release, error) {
 	var r Release
-	var assets, required, envelope []byte
-	e := row.Scan(&r.ID, &r.Version, &r.Channel, &r.Notes, &r.Status, &assets, &required, &envelope, &r.CreatedAt)
+	var assets, required, envelope, options []byte
+	e := row.Scan(&r.ID, &r.Version, &r.Channel, &r.Notes, &r.Status, &assets, &required, &envelope, &r.CreatedAt, &r.Product, &options)
 	if e != nil {
 		return r, e
 	}
@@ -86,13 +108,16 @@ func scan(row interface{ Scan(...any) error }) (Release, error) {
 		r.Envelope = &Envelope{}
 		e = json.Unmarshal(envelope, r.Envelope)
 	}
+	if e == nil {
+		e = json.Unmarshal(options, &r.Options)
+	}
 	return r, e
 }
 func (s *Service) Get(ctx context.Context, id int64) (Release, error) {
-	return scan(s.DB.QueryRowContext(ctx, `SELECT `+columns+` FROM client_releases WHERE id=$1`, id))
+	return scan(s.DB.QueryRowContext(ctx, `SELECT `+columns+` FROM client_releases WHERE id=$1 AND product_id=$2`, id, s.product()))
 }
 func (s *Service) List(ctx context.Context) ([]Release, error) {
-	rows, e := s.DB.QueryContext(ctx, `SELECT `+columns+` FROM client_releases ORDER BY id DESC LIMIT 100`)
+	rows, e := s.DB.QueryContext(ctx, `SELECT `+columns+` FROM client_releases WHERE product_id=$1 ORDER BY id DESC LIMIT 100`, s.product())
 	if e != nil {
 		return nil, e
 	}
@@ -108,21 +133,71 @@ func (s *Service) List(ctx context.Context) ([]Release, error) {
 	return out, rows.Err()
 }
 func (s *Service) Current(ctx context.Context) (Release, error) {
-	return scan(s.DB.QueryRowContext(ctx, `SELECT `+strings.ReplaceAll(columns, ",", ",r.")+` FROM client_releases r JOIN client_release_channels c ON r.id=c.release_id WHERE c.product_id=$1 AND c.channel='stable' AND r.status='published'`, Product))
+	return scan(s.DB.QueryRowContext(ctx, `SELECT r.`+strings.ReplaceAll(columns, ",", ",r.")+` FROM client_releases r JOIN client_release_channels c ON r.id=c.release_id WHERE c.product_id=$1 AND r.product_id=$1 AND c.channel='stable' AND r.status='published'`, s.product()))
+}
+
+func (s *Service) InstallerRelease(ctx context.Context) (Release, error) {
+	return scan(s.DB.QueryRowContext(ctx, `SELECT `+columns+` FROM client_releases WHERE product_id=$1 AND status='published' AND EXISTS (SELECT 1 FROM jsonb_array_elements(assets) asset WHERE asset->>'platform' IN ('macos','windows')) ORDER BY id DESC LIMIT 1`, s.product()))
+}
+
+func (s *Service) EditOptions(ctx context.Context, id, uid int64, notes string, mandatory bool) (Release, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.product() != ManjuProduct || len(notes) > 16000 {
+		return Release{}, errors.New("发布说明无效")
+	}
+	r, err := s.Get(ctx, id)
+	if err != nil {
+		return r, err
+	}
+	if r.Status != "draft" {
+		return r, errors.New("只有草稿可以修改发布说明和更新策略")
+	}
+	r.Options.Mandatory = mandatory
+	options, err := json.Marshal(r.Options)
+	if err != nil {
+		return r, err
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return r, err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE client_releases SET notes=$1,release_options=$2,envelope=NULL WHERE id=$3 AND product_id=$4 AND status='draft'`, notes, options, id, s.product())
+	if err != nil {
+		return r, err
+	}
+	if n, _ := result.RowsAffected(); n != 1 {
+		return r, errors.New("草稿状态已改变")
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO client_release_audits(release_id,actor,action) VALUES($1,$2,'edit')`, id, uid); err != nil {
+		return r, err
+	}
+	if err = tx.Commit(); err != nil {
+		return r, err
+	}
+	return s.Get(ctx, id)
 }
 func (s *Service) Create(ctx context.Context, uid int64, version, notes string, required []string) (Release, error) {
+	return s.CreateWithOptions(ctx, uid, version, notes, required, ReleaseOptions{})
+}
+func (s *Service) CreateWithOptions(ctx context.Context, uid int64, version, notes string, required []string, options ReleaseOptions) (Release, error) {
+	if s.product() != ManjuProduct && (options.Mandatory || options.RuntimeHash != "") {
+		return Release{}, errors.New("当前产品不支持此更新选项")
+	}
 	if !VersionValid(version) || len(notes) > 16000 || len(required) == 0 || len(required) > 3 {
 		return Release{}, errors.New("版本或目标平台无效")
 	}
 	seen := map[string]bool{}
 	for _, t := range required {
-		if seen[t] || !(t == "windows/x64" || t == "macos/universal" || t == "macos/arm64" || t == "macos/x64") {
+		if seen[t] || !(t == "windows/x64" || t == "macos/universal" || t == "macos/arm64" || t == "macos/x64" || (s.product() == ManjuProduct && t == "renderer/any")) {
 			return Release{}, errors.New("目标平台无效")
 		}
 		seen[t] = true
 	}
 	b, _ := json.Marshal(required)
-	return scan(s.DB.QueryRowContext(ctx, `INSERT INTO client_releases(version,notes,required_targets,created_by) VALUES($1,$2,$3,$4) RETURNING `+columns, version, notes, b, uid))
+	o, _ := json.Marshal(options)
+	return scan(s.DB.QueryRowContext(ctx, `INSERT INTO client_releases(product_id,version,notes,required_targets,created_by,release_options) VALUES($1,$2,$3,$4,$5,$6) RETURNING `+columns, s.product(), version, notes, b, uid, o))
 }
 func (s *Service) Upload(ctx context.Context, id, uid int64, platform, arch, name string, reader io.Reader) (Release, error) {
 	s.mu.Lock()
@@ -135,8 +210,13 @@ func (s *Service) Upload(ctx context.Context, id, uid int64, platform, arch, nam
 		return r, errors.New("仅草稿允许上传")
 	}
 	a := Asset{Platform: platform, Arch: arch, Name: name, Size: 1, SHA256: strings.Repeat("0", 64)}
-	a.URL = AssetURL(r.Version, a.SHA256, name)
-	if e = (Manifest{Schema: 1, Product: Product, Version: r.Version, Channel: "stable", Sequence: id, Assets: []Asset{a}}).Validate(); e != nil {
+	a.URL = ProductAssetURL(s.product(), r.Version, a.SHA256, name)
+	preview := DraftManifest(r)
+	preview.Assets = []Asset{a}
+	if platform == "renderer" {
+		preview.RuntimeHash = strings.Repeat("0", 64)
+	}
+	if e = preview.Validate(); e != nil {
 		return r, e
 	}
 	var random [16]byte
@@ -148,8 +228,13 @@ func (s *Service) Upload(ctx context.Context, id, uid int64, platform, arch, nam
 	if e != nil {
 		return r, e
 	}
+	defer os.Remove(tmp)
 	h := sha256.New()
-	n, e := io.Copy(io.MultiWriter(f, h), io.LimitReader(reader, (2<<30)+1))
+	limit := int64(2 << 30)
+	if platform == "renderer" {
+		limit = 64 << 20
+	}
+	n, e := io.Copy(io.MultiWriter(f, h), io.LimitReader(reader, limit+1))
 	closeErr := f.Close()
 	if e != nil {
 		return r, e
@@ -157,12 +242,18 @@ func (s *Service) Upload(ctx context.Context, id, uid int64, platform, arch, nam
 	if closeErr != nil {
 		return r, closeErr
 	}
-	if n <= 0 || n > 2<<30 {
-		return r, errors.New("安装包为空或超过 2 GiB")
+	if n <= 0 || n > limit {
+		return r, errors.New("更新文件为空或超过大小限制")
 	}
 	a.Size = n
 	a.SHA256 = hex.EncodeToString(h.Sum(nil))
-	a.URL = AssetURL(r.Version, a.SHA256, a.Name)
+	a.URL = ProductAssetURL(s.product(), r.Version, a.SHA256, a.Name)
+	if platform == "renderer" {
+		r.Options.RuntimeHash, e = inspectRendererBundle(tmp, r.Version)
+		if e != nil {
+			return r, e
+		}
+	}
 	dir := filepath.Join(s.Root, "objects", a.SHA256)
 	if e = os.MkdirAll(dir, 0700); e != nil {
 		return r, e
@@ -177,15 +268,17 @@ func (s *Service) Upload(ctx context.Context, id, uid int64, platform, arch, nam
 	if e != nil {
 		return r, e
 	}
-	next := []Asset{}
-	for _, v := range r.Assets {
-		if v.Platform != platform || v.Arch != arch {
-			next = append(next, v)
-		}
+	b, _ := json.Marshal([]Asset{a})
+	runtimeHash := ""
+	if platform == "renderer" {
+		runtimeHash = r.Options.RuntimeHash
 	}
-	next = append(next, a)
-	b, _ := json.Marshal(next)
-	result, e := s.DB.ExecContext(ctx, `UPDATE client_releases SET assets=$1,envelope=NULL WHERE id=$2 AND status='draft'`, b, id)
+	// Merge the one target in SQL so two uploader processes cannot overwrite
+	// another platform's file or a concurrently edited mandatory policy.
+	result, e := s.DB.ExecContext(ctx, `UPDATE client_releases SET
+ assets=COALESCE((SELECT jsonb_agg(asset) FROM jsonb_array_elements(assets) asset WHERE NOT (asset->>'platform'=$2 AND asset->>'arch'=$3)),'[]'::jsonb)||$1::jsonb,
+ envelope=NULL,release_options=CASE WHEN $6<>'' THEN jsonb_set(release_options,'{runtime_sha256}',to_jsonb($6::text),true) ELSE release_options END
+ WHERE id=$4 AND product_id=$5 AND status='draft'`, b, platform, arch, id, s.product(), runtimeHash)
 	if e != nil {
 		return r, e
 	}
@@ -215,10 +308,22 @@ func (s *Service) verifyFile(a Asset) error {
 	return nil
 }
 func DraftManifest(r Release) Manifest {
-	return Manifest{Schema: 1, Product: Product, Version: r.Version, Channel: r.Channel, Sequence: r.ID, PublishedAt: r.CreatedAt.UTC().Format(time.RFC3339), Notes: r.Notes, Assets: r.Assets}
+	product := r.Product
+	if product == "" {
+		product = Product
+	}
+	m := Manifest{Schema: 1, Product: product, Version: r.Version, Channel: r.Channel, Sequence: r.ID, PublishedAt: r.CreatedAt.UTC().Format(time.RFC3339), Notes: r.Notes, Assets: r.Assets}
+	if product == ManjuProduct {
+		m.Schema = 2
+		m.AppID = ManjuAppID
+		m.Mandatory = r.Options.Mandatory
+		m.RuntimeHash = r.Options.RuntimeHash
+	}
+	return m
 }
 func matches(r Release, m Manifest) error {
-	if m.Version != r.Version || m.Sequence != r.ID || m.Notes != r.Notes || m.Channel != r.Channel || len(m.Assets) != len(r.Assets) {
+	draft := DraftManifest(r)
+	if m.Product != draft.Product || m.Mandatory != draft.Mandatory || m.RuntimeHash != draft.RuntimeHash || m.AppID != draft.AppID || m.Version != r.Version || m.Sequence != r.ID || m.Notes != r.Notes || m.Channel != r.Channel || len(m.Assets) != len(r.Assets) {
 		return errors.New("签名清单与当前草稿不一致")
 	}
 	wanted := map[string]bool{}
@@ -258,7 +363,7 @@ func (s *Service) Validate(ctx context.Context, id, uid int64, env Envelope) (Re
 	if r.Status != "draft" {
 		return r, errors.New("只能校验草稿")
 	}
-	m, e := Verify(env, s.Public)
+	m, e := VerifyProduct(env, s.Public, s.product())
 	if e != nil {
 		return r, e
 	}
@@ -294,7 +399,7 @@ func (s *Service) Publish(ctx context.Context, id, uid int64) error {
 	if r.Status != "ready" || r.Envelope == nil {
 		return errors.New("版本尚未通过签名校验")
 	}
-	m, e := Verify(*r.Envelope, s.Public)
+	m, e := VerifyProduct(*r.Envelope, s.Public, s.product())
 	if e != nil {
 		return e
 	}
@@ -316,7 +421,7 @@ func (s *Service) Publish(ctx context.Context, id, uid int64) error {
 	}
 	var previous string
 	var previousID int64
-	e = tx.QueryRowContext(ctx, `SELECT version,id FROM client_releases WHERE product_id=$1 AND channel='stable' AND published_at IS NOT NULL ORDER BY id DESC LIMIT 1`, Product).Scan(&previous, &previousID)
+	e = tx.QueryRowContext(ctx, `SELECT version,id FROM client_releases WHERE product_id=$1 AND channel='stable' AND published_at IS NOT NULL ORDER BY id DESC LIMIT 1`, s.product()).Scan(&previous, &previousID)
 	if e != nil && e != sql.ErrNoRows {
 		return e
 	}
@@ -330,7 +435,7 @@ func (s *Service) Publish(ctx context.Context, id, uid int64) error {
 	if n, _ := result.RowsAffected(); n != 1 {
 		return errors.New("版本已被其他管理员修改")
 	}
-	if _, e = tx.ExecContext(ctx, `INSERT INTO client_release_channels(product_id,channel,release_id) VALUES($1,'stable',$2) ON CONFLICT(product_id,channel) DO UPDATE SET release_id=EXCLUDED.release_id`, Product, id); e != nil {
+	if _, e = tx.ExecContext(ctx, `INSERT INTO client_release_channels(product_id,channel,release_id) VALUES($1,'stable',$2) ON CONFLICT(product_id,channel) DO UPDATE SET release_id=EXCLUDED.release_id`, s.product(), id); e != nil {
 		return e
 	}
 	if _, e = tx.ExecContext(ctx, `INSERT INTO client_release_audits(release_id,actor,action) VALUES($1,$2,'publish')`, id, uid); e != nil {
@@ -350,7 +455,7 @@ func (s *Service) Withdraw(ctx context.Context, id, uid int64, reason string) er
 	if _, e = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(167281041)`); e != nil {
 		return e
 	}
-	result, e := tx.ExecContext(ctx, `UPDATE client_releases SET status='withdrawn' WHERE id=$1 AND status IN ('published','ready')`, id)
+	result, e := tx.ExecContext(ctx, `UPDATE client_releases SET status='withdrawn' WHERE id=$1 AND product_id=$2 AND status IN ('published','ready')`, id, s.product())
 	if e != nil {
 		return e
 	}
@@ -369,7 +474,7 @@ func (s *Service) Download(ctx context.Context, version, hash, name string) (str
 	if !filenamePattern.MatchString(name) || !VersionValid(version) || len(hash) != 64 {
 		return "", errors.New("无效下载路径")
 	}
-	rows, e := s.DB.QueryContext(ctx, `SELECT `+columns+` FROM client_releases WHERE product_id=$1 AND version=$2 AND status='published'`, Product, version)
+	rows, e := s.DB.QueryContext(ctx, `SELECT `+columns+` FROM client_releases WHERE product_id=$1 AND version=$2 AND status='published'`, s.product(), version)
 	if e != nil {
 		return "", e
 	}
@@ -386,4 +491,20 @@ func (s *Service) Download(ctx context.Context, version, hash, name string) (str
 		}
 	}
 	return "", fmt.Errorf("安装包尚未发布或已撤回")
+}
+
+// Only this independent product uses server-side signing; Codex++ remains offline-signed.
+func (s *Service) Prepare(ctx context.Context, id, uid int64) (Release, error) {
+	if s.product() != ManjuProduct || len(s.SigningKey) != ed25519.PrivateKeySize {
+		return Release{}, errors.New("该产品未配置后台发布签名")
+	}
+	r, e := s.Get(ctx, id)
+	if e != nil {
+		return r, e
+	}
+	data, e := json.Marshal(DraftManifest(r))
+	if e != nil {
+		return r, e
+	}
+	return s.Validate(ctx, id, uid, Envelope{Manifest: base64.StdEncoding.EncodeToString(data), Signature: base64.StdEncoding.EncodeToString(ed25519.Sign(s.SigningKey, data)), KeyID: ManjuKeyID})
 }

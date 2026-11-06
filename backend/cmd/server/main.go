@@ -3,6 +3,7 @@ package main
 import (
 	"archive/zip"
 	"context"
+	"crypto/ed25519"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -32,6 +33,7 @@ type app struct {
 	recharge      *recharge.Service
 	gallery       *gallery.SQLRepository
 	updates       *clientupdates.Service
+	manjuUpdates  *clientupdates.Service
 }
 
 func main() {
@@ -39,12 +41,17 @@ func main() {
 	if e != nil {
 		log.Fatal(e)
 	}
+	if os.Getenv("CLIENT_UPDATES_ONLY") == "true" {
+		db.SetMaxOpenConns(8)
+		db.SetMaxIdleConns(4)
+		db.SetConnMaxLifetime(5 * time.Minute)
+	}
 	base := strings.TrimRight(os.Getenv("FASTAIAPI_BASE_URL"), "/")
 	if base == "" {
 		log.Fatal("FASTAIAPI_BASE_URL is required")
 	}
 	a := &app{db: db, base: base, client: &http.Client{Timeout: 10 * time.Minute}, conversations: chatimage.NewSQLRepository(db), gallery: gallery.NewSQLRepository(db)}
-	if os.Getenv("RECHARGE_ENABLED") == "true" {
+	if os.Getenv("RECHARGE_ENABLED") == "true" && os.Getenv("CLIENT_UPDATES_ONLY") != "true" {
 		cfg, err := recharge.LoadConfig()
 		if err != nil {
 			log.Fatal(err)
@@ -58,19 +65,37 @@ func main() {
 		defer a.recharge.Close()
 		go a.recharge.Run(context.Background())
 	}
-	if os.Getenv("CLIENT_UPDATES_ENABLED") == "true" {
-		public, err := clientupdates.ParsePublic(os.Getenv("CLIENT_UPDATES_PUBLIC_KEY"))
-		if err != nil {
-			log.Fatal(err)
-		}
+	if os.Getenv("CLIENT_UPDATES_ENABLED") == "true" || os.Getenv("MANJU_UPDATES_SIGNING_KEY_FILE") != "" {
 		admin, err := sql.Open("pgx", os.Getenv("SUB2API_DATABASE_URL"))
 		if err != nil {
 			log.Fatal(err)
 		}
 		defer admin.Close()
+		admin.SetMaxOpenConns(4)
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		a.updates, err = clientupdates.New(ctx, db, admin, os.Getenv("CLIENT_UPDATES_DIR"), public)
-		cancel()
+		defer cancel()
+		if os.Getenv("CLIENT_UPDATES_ENABLED") == "true" {
+			public, err := clientupdates.ParsePublic(os.Getenv("CLIENT_UPDATES_PUBLIC_KEY"))
+			if err != nil {
+				log.Fatal(err)
+			}
+			a.updates, err = clientupdates.New(ctx, db, admin, os.Getenv("CLIENT_UPDATES_DIR"), public)
+			if err != nil {
+				log.Fatal(err)
+			}
+		}
+		if keyFile := os.Getenv("MANJU_UPDATES_SIGNING_KEY_FILE"); keyFile != "" {
+			key, err := clientupdates.LoadSigningKey(keyFile)
+			if err != nil {
+				log.Fatal(err)
+			}
+			a.manjuUpdates, err = clientupdates.New(ctx, db, admin, os.Getenv("CLIENT_UPDATES_DIR"), key.Public().(ed25519.PublicKey))
+			if err != nil {
+				log.Fatal(err)
+			}
+			a.manjuUpdates.Product = clientupdates.ManjuProduct
+			a.manjuUpdates.SigningKey = key
+		}
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -78,6 +103,14 @@ func main() {
 	m := http.NewServeMux()
 	m.HandleFunc("/api/client-updates/", a.clientUpdates)
 	m.HandleFunc("/downloads/codexplus/", a.clientDownload)
+	m.HandleFunc("/downloads/manju/", a.clientDownload)
+	if os.Getenv("CLIENT_UPDATES_ONLY") == "true" {
+		m.HandleFunc("/health", a.health)
+		if err := serveUpdateServer(updateCORS(m)); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	m.HandleFunc("/api/recharge/", a.rechargeRoute)
 	m.HandleFunc("/health", a.health)
 	m.HandleFunc("/api/proxy/", a.proxy)
