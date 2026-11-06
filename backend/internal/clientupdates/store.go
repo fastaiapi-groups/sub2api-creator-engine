@@ -406,23 +406,6 @@ func (s *Service) Publish(ctx context.Context, id, uid int64) error {
 	if e = matches(r, m); e != nil {
 		return e
 	}
-	if s.product() == ManjuProduct && m.RuntimeHash != "" {
-		hasInstaller := false
-		for _, asset := range m.Assets {
-			if asset.Platform != "renderer" {
-				hasInstaller = true
-			}
-		}
-		if !hasInstaller {
-			native, err := s.InstallerRelease(ctx)
-			if err != nil && err != sql.ErrNoRows {
-				return err
-			}
-			if err == nil && native.Options.RuntimeHash != m.RuntimeHash {
-				return errors.New("桌面兼容信息已变化，请在此版本中同时提供完整安装包与页面包")
-			}
-		}
-	}
 	for _, a := range m.Assets {
 		if e = s.verifyFile(a); e != nil {
 			return e
@@ -435,6 +418,23 @@ func (s *Service) Publish(ctx context.Context, id, uid int64) error {
 	defer tx.Rollback()
 	if _, e = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(167281041)`); e != nil {
 		return e
+	}
+	if s.product() == ManjuProduct && m.RuntimeHash != "" {
+		hasInstaller := false
+		for _, asset := range m.Assets {
+			if asset.Platform != "renderer" {
+				hasInstaller = true
+			}
+		}
+		if !hasInstaller {
+			native, err := scan(tx.QueryRowContext(ctx, `SELECT `+columns+` FROM client_releases WHERE product_id=$1 AND status='published' AND EXISTS(SELECT 1 FROM jsonb_array_elements(assets) a WHERE a->>'platform' IN ('macos','windows')) ORDER BY id DESC LIMIT 1`, s.product()))
+			if err != nil && err != sql.ErrNoRows {
+				return err
+			}
+			if err == nil && native.Options.RuntimeHash != m.RuntimeHash {
+				return errors.New("桌面兼容信息已变化，请在此版本中同时提供完整安装包与页面包")
+			}
+		}
 	}
 	var previous string
 	var previousID int64
