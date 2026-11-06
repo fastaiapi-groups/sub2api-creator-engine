@@ -406,6 +406,23 @@ func (s *Service) Publish(ctx context.Context, id, uid int64) error {
 	if e = matches(r, m); e != nil {
 		return e
 	}
+	if s.product() == ManjuProduct && m.RuntimeHash != "" {
+		hasInstaller := false
+		for _, asset := range m.Assets {
+			if asset.Platform != "renderer" {
+				hasInstaller = true
+			}
+		}
+		if !hasInstaller {
+			native, err := s.InstallerRelease(ctx)
+			if err != nil && err != sql.ErrNoRows {
+				return err
+			}
+			if err == nil && native.Options.RuntimeHash != m.RuntimeHash {
+				return errors.New("桌面兼容信息已变化，请在此版本中同时提供完整安装包与页面包")
+			}
+		}
+	}
 	for _, a := range m.Assets {
 		if e = s.verifyFile(a); e != nil {
 			return e

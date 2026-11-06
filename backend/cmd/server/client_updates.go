@@ -46,6 +46,20 @@ func (a *app) clientUpdates(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
+		if product == clientupdates.ManjuProduct {
+			var installer *clientupdates.Envelope
+			if native, err := updates.InstallerRelease(r.Context()); err == nil {
+				installer = native.Envelope
+			} else if err != sql.ErrNoRows {
+				failText(w, 503, "兼容安装包检查暂不可用")
+				return
+			}
+			json.NewEncoder(w).Encode(struct {
+				*clientupdates.Envelope
+				Installer *clientupdates.Envelope `json:"installer_envelope,omitempty"`
+			}{release.Envelope, installer})
+			return
+		}
 		json.NewEncoder(w).Encode(release.Envelope)
 		return
 	}

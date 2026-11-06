@@ -227,6 +227,19 @@ func TestManjuReleaseLifecycleAndProductIsolation(t *testing.T) {
 	if err != nil || installer.ID != r.ID {
 		t.Fatal("download page did not select the latest complete installer", err)
 	}
+	page, err := manju.Create(ctx, 7, "0.2.15", "页面更新", []string{"renderer/any"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = manju.Upload(ctx, page.ID, 7, "renderer", "any", "page.zip", bytes.NewReader(manjuArchive(t, page.Version))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = manju.Prepare(ctx, page.ID, 7); err != nil {
+		t.Fatal(err)
+	}
+	if err = manju.Publish(ctx, page.ID, 7); err == nil {
+		t.Fatal("incompatible page-only release was published without a matching installer")
+	}
 }
 
 func TestRendererArchiveRejectsWrongIdentityAndTraversal(t *testing.T) {
