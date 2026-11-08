@@ -21,11 +21,20 @@ type dailyUsage struct {
 	TokenAmount float64 `json:"token_amount"`
 }
 
+type usageSourceStats struct {
+	Usage        []dailyUsage `json:"usage"`
+	RequestCount int64        `json:"request_count"`
+	ImageCount   float64      `json:"image_count"`
+	TotalAmount  float64      `json:"total_amount"`
+}
+
 type rechargeStats struct {
 	Daily          []recharge.DailyRecharge `json:"daily"`
 	YesterdayTotal float64                  `json:"yesterday_total"`
 	TodayTotal     float64                  `json:"today_total"`
 	Usage          []dailyUsage             `json:"usage"`
+	NewAPI         usageSourceStats         `json:"new_api"`
+	SubAPI         usageSourceStats         `json:"sub_api"`
 }
 
 func (a *app) enrichAdminOrders(ctx context.Context, orders []recharge.AdminOrder) error {
@@ -78,7 +87,7 @@ func (a *app) rechargeStats(ctx context.Context, authorization string) (recharge
 	if logDB == nil {
 		logDB = a.sub2db
 	}
-	rows, err := logDB.QueryContext(ctx, `SELECT to_char(to_timestamp(created_at) AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD'), COALESCE(sum(CASE WHEN other LIKE '%Image count%' THEN quota ELSE 0 END),0), COALESCE(sum(prompt_tokens)+sum(completion_tokens),0) FROM logs WHERE type=2 AND created_at >= extract(epoch FROM now()-interval '30 days') GROUP BY 1 ORDER BY 1`)
+	rows, err := logDB.QueryContext(ctx, `SELECT to_char(to_timestamp(created_at) AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD'), COALESCE(sum(CASE WHEN other LIKE '%Image count%' THEN quota ELSE 0 END),0), COALESCE(sum(prompt_tokens)+sum(completion_tokens),0) FROM logs WHERE type=2 AND quota > 0 AND created_at >= extract(epoch FROM now()-interval '30 days') GROUP BY 1 ORDER BY 1`)
 	if err != nil {
 		return a.remoteUsageStats(ctx, authorization, stats, quotaPerUnit)
 	}
@@ -96,7 +105,7 @@ func (a *app) rechargeStats(ctx context.Context, authorization string) (recharge
 	if err := rows.Err(); err != nil {
 		return stats, err
 	}
-	imageRows, err := logDB.QueryContext(ctx, `SELECT to_char(to_timestamp(created_at) AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD'), COALESCE(sum((substring(other from '"params":\{"count":([0-9]+(\.[0-9]+)?)')::numeric)),0) FROM logs WHERE type=2 AND created_at >= extract(epoch FROM now()-interval '30 days') AND other LIKE '%Image count%' GROUP BY 1`)
+	imageRows, err := logDB.QueryContext(ctx, `SELECT to_char(to_timestamp(created_at) AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD'), COALESCE(sum((substring(other from '"params":\{"count":([0-9]+(\.[0-9]+)?)')::numeric)),0) FROM logs WHERE type=2 AND quota > 0 AND created_at >= extract(epoch FROM now()-interval '30 days') AND other LIKE '%Image count%' GROUP BY 1`)
 	if err != nil {
 		return a.remoteUsageStats(ctx, authorization, stats, quotaPerUnit)
 	}
@@ -123,7 +132,42 @@ func (a *app) rechargeStats(ctx context.Context, authorization string) (recharge
 		stats.Usage = append(stats.Usage, *item)
 	}
 	sort.Slice(stats.Usage, func(i, j int) bool { return stats.Usage[i].Date < stats.Usage[j].Date })
+	stats.NewAPI = usageSourceStats{Usage: stats.Usage}
+	if err := logDB.QueryRowContext(ctx, `SELECT count(*) FROM logs WHERE type=2 AND quota > 0 AND created_at >= extract(epoch FROM now()-interval '30 days')`).Scan(&stats.NewAPI.RequestCount); err == nil {
+		for _, item := range stats.NewAPI.Usage {
+			stats.NewAPI.ImageCount += item.ImageCount
+			stats.NewAPI.TotalAmount += item.TotalAmount
+		}
+	}
+	stats.SubAPI, err = a.subAPIUsageStats(ctx)
+	if err != nil {
+		return stats, err
+	}
 	return stats, nil
+}
+
+func (a *app) subAPIUsageStats(ctx context.Context) (usageSourceStats, error) {
+	result := usageSourceStats{Usage: make([]dailyUsage, 0, 30)}
+	if a.sub2db == nil {
+		return result, nil
+	}
+	rows, err := a.sub2db.QueryContext(ctx, `SELECT to_char(created_at AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD'), count(*), COALESCE(sum(image_count),0), COALESCE(sum(CASE WHEN image_count > 0 THEN actual_cost ELSE 0 END),0), COALESCE(sum(CASE WHEN image_count > 0 THEN 0 ELSE actual_cost END),0) FROM usage_logs WHERE actual_cost > 0 AND created_at >= now()-interval '30 days' GROUP BY 1 ORDER BY 1`)
+	if err != nil {
+		return result, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var item dailyUsage
+		var requests int64
+		if err := rows.Scan(&item.Date, &requests, &item.ImageCount, &item.TotalAmount, &item.TokenAmount); err != nil {
+			return result, err
+		}
+		result.Usage = append(result.Usage, item)
+		result.RequestCount += requests
+		result.ImageCount += item.ImageCount
+		result.TotalAmount += item.TotalAmount
+	}
+	return result, rows.Err()
 }
 
 type remoteLog struct {
