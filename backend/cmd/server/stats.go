@@ -105,7 +105,7 @@ func (a *app) remoteUsageStats(ctx context.Context, authorization string, stats 
 	start := time.Now().In(loc).AddDate(0, 0, -29).Truncate(24 * time.Hour).Unix()
 	byDate := map[string]*dailyUsage{}
 	for page := 1; page <= 100; page++ {
-		u := a.base + "/api/v1/log/?" + url.Values{"p": {strconv.Itoa(page)}, "page_size": {"100"}, "type": {"2"}, "start_timestamp": {strconv.FormatInt(start, 10)}}.Encode()
+		u := a.base + "/fastaiapi/api/v1/log/?" + url.Values{"p": {strconv.Itoa(page)}, "page_size": {"100"}, "type": {"2"}, "start_timestamp": {strconv.FormatInt(start, 10)}}.Encode()
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 		if err != nil {
 			return stats, err
