@@ -3,7 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import RechargeView from './RechargeView.vue'
 import RechargeOrders from './RechargeOrders.vue'
 import { apiClient } from '../../api/client'
-vi.mock('../../api/client',()=>({apiClient:{get:vi.fn(),post:vi.fn()}}))
+vi.mock('../../api/client',()=>({apiClient:{get:vi.fn(),post:vi.fn()},getAuthToken:vi.fn(()=>localStorage.getItem('auth_token')||localStorage.getItem('token')||'')}))
 const partial={id:'RA-partial-payment-order',package_id:'one',amount_cents:100,credit:'1',paid_amount_cents:1,credited_credit:'0.01000000',payment_type:'wxpay',status:'paid',created_at:'2026-10-18T12:00:00Z',paid_at:'2026-10-18T12:01:00Z',reversed_at:null,gateway_status:'paid'}
 let wrapper:ReturnType<typeof mount>
 let admin=false

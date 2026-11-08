@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { apiClient } from '../../api/client'
+import { apiClient, getAuthToken } from '../../api/client'
 import RechargeAdmin from './RechargeAdmin.vue'
 import RechargeDialog from './RechargeDialog.vue'
 import RechargeOrders from './RechargeOrders.vue'
@@ -17,14 +17,14 @@ const amount = (n: number) => (n / 100).toFixed(2)
 function showError(e: any) { error.value = e?.response?.data?.message || e?.message || '请求失败，请稍后重试' }
 let refreshSequence=0
 async function refresh() {
- const sequence=++refreshSequence, token=localStorage.getItem('auth_token') || localStorage.getItem('token')
+ const sequence=++refreshSequence, token=getAuthToken()
  let me
  try {me=await apiClient.get('/proxy/me')} catch(e:any) {
   if(sequence===refreshSequence && (e?.response?.status===401 || e?.status===401)){authenticated.value=false;isAdmin.value=false;orders.value=[];logs.value=[];email.value='';balance.value='—'}
   throw e
  }
  const [list,history,access]=await Promise.allSettled([apiClient.get('/recharge/orders'),apiClient.get('/recharge/logs'),apiClient.get('/recharge/access')])
- if(sequence!==refreshSequence || token!==(localStorage.getItem('auth_token') || localStorage.getItem('token')))return
+ if(sequence!==refreshSequence || token!==getAuthToken())return
  if(email.value!==me.data.email){orders.value=[];logs.value=[];isAdmin.value=false}
  balance.value=me.data.balance;email.value=me.data.email;authenticated.value=true
  if(list.status==='fulfilled')orders.value=list.value.data;else showError(list.reason)
@@ -54,7 +54,7 @@ async function checkReturn(id: string) {
 }
 onMounted(async () => {
   try { packages.value = (await apiClient.get('/recharge/packages')).data } catch (e) { showError(e) }
-  const token = localStorage.getItem('auth_token') || localStorage.getItem('token')
+  const token = getAuthToken()
   if (!token) return
   try {
     await refresh()
