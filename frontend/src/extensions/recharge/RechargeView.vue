@@ -59,6 +59,7 @@ onMounted(async () => {
   if (!token) return
   try {
     await refresh()
+    if (new URLSearchParams(window.location.search).get('tab') === 'stats' && isAdmin.value) tab.value = 'stats'
     refreshTimer=setInterval(() => {if(document.visibilityState==='visible') refresh().catch(showError)},30000)
     const id = new URLSearchParams(window.location.search).get('order')
     if (id) { tab.value = 'orders'; notice.value = '正在等待支付结果确认…'; await checkReturn(id) }
