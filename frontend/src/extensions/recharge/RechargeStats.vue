@@ -34,7 +34,7 @@ function render() {
 }
 function fillDates<T extends { date: string }>(rows: T[], factory: (date: string) => T) {
   const byDate = new Map(rows.map(row => [row.date, row])); const out: T[] = []
-  for (let i = 29; i >= 0; i--) { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - i); const date = d.toISOString().slice(0, 10); out.push(byDate.get(date) || factory(date)) }
+  for (let i = 29; i >= 0; i--) { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - i); const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; out.push(byDate.get(date) || factory(date)) }
   return out
 }
 function resize() { rechargeInstance?.resize(); usageInstance?.resize(); amountInstance?.resize() }
