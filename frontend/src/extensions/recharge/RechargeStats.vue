@@ -52,7 +52,7 @@ onUnmounted(() => { window.removeEventListener('resize', resize); rechargeInstan
     <div class="summary"><div><span>昨日收款总额</span><strong>¥{{ activeYesterday.toFixed(2) }}</strong></div><div><span>今日收款总额</span><strong>¥{{ activeToday.toFixed(2) }}</strong></div></div>
     <div class="chart-card"><h3>近 30 天充值总额</h3><div ref="rechargeChart" class="chart"></div></div>
     <div class="chart-card"><h3>近 30 天图片数量</h3><p class="hint">按使用记录中的 Image count 汇总。</p><div ref="usageChart" class="chart"></div></div>
-    <div class="chart-card"><h3>近 30 天金额</h3><p class="hint">图片总金额按每条生图记录的费用字段（日志 quota）汇总并换算为 RMB；Token金额统计全部调用记录。</p><div ref="amountChart" class="chart"></div></div>
+    <div class="chart-card"><h3>近 30 天金额</h3><p class="hint">图片金额和 Token 调用金额均按成功记录的实际费用字段汇总，按 1:1 换算为 RMB。</p><div ref="amountChart" class="chart"></div></div>
   </section>
 </template>
 <style scoped>

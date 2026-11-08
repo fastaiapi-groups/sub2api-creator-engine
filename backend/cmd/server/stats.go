@@ -91,7 +91,7 @@ func (a *app) rechargeStats(ctx context.Context, authorization string) (recharge
 	if logDB == nil {
 		logDB = a.sub2db
 	}
-	rows, err := logDB.QueryContext(ctx, `SELECT to_char(to_timestamp(created_at) AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD'), COALESCE(sum(CASE WHEN other LIKE '%Image count%' THEN quota ELSE 0 END),0), COALESCE(sum(prompt_tokens)+sum(completion_tokens),0) FROM logs WHERE type=2 AND quota > 0 AND created_at >= extract(epoch FROM now()-interval '30 days') GROUP BY 1 ORDER BY 1`)
+	rows, err := logDB.QueryContext(ctx, `SELECT to_char(to_timestamp(created_at) AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD'), COALESCE(sum(CASE WHEN other LIKE '%Image count%' THEN quota ELSE 0 END),0), COALESCE(sum(CASE WHEN other LIKE '%Image count%' THEN 0 ELSE quota END),0) FROM logs WHERE type=2 AND quota > 0 AND created_at >= extract(epoch FROM now()-interval '30 days') GROUP BY 1 ORDER BY 1`)
 	if err != nil {
 		return a.remoteUsageStats(ctx, authorization, stats, quotaPerUnit)
 	}
