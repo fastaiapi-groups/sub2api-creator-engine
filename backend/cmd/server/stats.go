@@ -96,7 +96,7 @@ func (a *app) rechargeStats(ctx context.Context, authorization string) (recharge
 	if err := rows.Err(); err != nil {
 		return stats, err
 	}
-	imageRows, err := logDB.QueryContext(ctx, `SELECT to_char(to_timestamp(created_at) AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD'), COALESCE(sum((substring(other from '\"params\":\\{\"count\":([0-9]+(\\.[0-9]+)?)')::numeric)),0) FROM logs WHERE type=2 AND created_at >= extract(epoch FROM now()-interval '30 days') AND other LIKE '%Image count%' GROUP BY 1`)
+	imageRows, err := logDB.QueryContext(ctx, `SELECT to_char(to_timestamp(created_at) AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD'), COALESCE(sum((substring(other from '"params":\{"count":([0-9]+(\.[0-9]+)?)')::numeric)),0) FROM logs WHERE type=2 AND created_at >= extract(epoch FROM now()-interval '30 days') AND other LIKE '%Image count%' GROUP BY 1`)
 	if err != nil {
 		return a.remoteUsageStats(ctx, authorization, stats, quotaPerUnit)
 	}
