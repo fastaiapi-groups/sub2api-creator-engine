@@ -36,6 +36,7 @@ services:
       RECHARGE_PACKAGES: ${RECHARGE_PACKAGES:-}
       SUB2API_DATABASE_URL: ${SUB2API_DATABASE_URL:-}
       SUB2API_REDIS_URL: ${SUB2API_REDIS_URL:-}
+      NEWAPI_DATABASE_URL: ${NEWAPI_DATABASE_URL:-}
     volumes: [client-updates:/data/client-updates]
     ports: ["${SUB_ADDS_BACKEND_PORT:-4455}:8080"]
     depends_on: [postgres, redis]

@@ -28,6 +28,7 @@ const authMePath = "/api/v1/auth/me"
 type app struct {
 	db            *sql.DB
 	sub2db        *sql.DB
+	newapiDB      *sql.DB
 	base          string
 	client        *http.Client
 	conversations *chatimage.SQLRepository
@@ -59,6 +60,14 @@ func main() {
 			log.Fatal(subErr)
 		}
 		defer a.sub2db.Close()
+	}
+	if newapiURL := os.Getenv("NEWAPI_DATABASE_URL"); newapiURL != "" {
+		var newapiErr error
+		a.newapiDB, newapiErr = sql.Open("pgx", newapiURL)
+		if newapiErr != nil {
+			log.Fatal(newapiErr)
+		}
+		defer a.newapiDB.Close()
 	}
 	if os.Getenv("RECHARGE_ENABLED") == "true" && os.Getenv("CLIENT_UPDATES_ONLY") != "true" {
 		cfg, err := recharge.LoadConfig()

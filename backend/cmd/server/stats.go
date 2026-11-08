@@ -69,7 +69,11 @@ func (a *app) rechargeStats(ctx context.Context, authorization string) (recharge
 			quotaPerUnit = parsed
 		}
 	}
-	rows, err := a.sub2db.QueryContext(ctx, `SELECT to_char(to_timestamp(created_at) AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD'), COALESCE(sum(quota),0), COALESCE(sum(prompt_tokens)+sum(completion_tokens),0), COALESCE(sum(CASE WHEN COALESCE(NULLIF(other::jsonb->>'image_count',''),'0') ~ '^[0-9]+(\\.[0-9]+)?$' THEN (other::jsonb->>'image_count')::numeric ELSE 0 END),0) FROM logs WHERE type=2 AND created_at >= extract(epoch FROM now()-interval '30 days') GROUP BY 1 ORDER BY 1`)
+	logDB := a.newapiDB
+	if logDB == nil {
+		logDB = a.sub2db
+	}
+	rows, err := logDB.QueryContext(ctx, `SELECT to_char(to_timestamp(created_at) AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD'), COALESCE(sum(quota),0), COALESCE(sum(prompt_tokens)+sum(completion_tokens),0), COALESCE(sum(CASE WHEN COALESCE(NULLIF(other::jsonb->>'image_count',''),'0') ~ '^[0-9]+(\\.[0-9]+)?$' THEN (other::jsonb->>'image_count')::numeric ELSE 0 END),0) FROM logs WHERE type=2 AND created_at >= extract(epoch FROM now()-interval '30 days') GROUP BY 1 ORDER BY 1`)
 	if err != nil {
 		return a.remoteUsageStats(ctx, authorization, stats, quotaPerUnit)
 	}
