@@ -8,8 +8,8 @@ interface DailyUsage { date: string; image_count: number; total_amount: number; 
 interface Stats { daily: DailyRecharge[]; yesterday_total: number; today_total: number; usage: DailyUsage[] }
 const stats = ref<Stats>({ daily: [], yesterday_total: 0, today_total: 0, usage: [] })
 const error = ref(''), loading = ref(true)
-const rechargeChart = ref<HTMLElement | null>(null), usageChart = ref<HTMLElement | null>(null)
-let rechargeInstance: echarts.ECharts | undefined, usageInstance: echarts.ECharts | undefined
+const rechargeChart = ref<HTMLElement | null>(null), usageChart = ref<HTMLElement | null>(null), amountChart = ref<HTMLElement | null>(null)
+let rechargeInstance: echarts.ECharts | undefined, usageInstance: echarts.ECharts | undefined, amountInstance: echarts.ECharts | undefined
 function chartData(rows: DailyRecharge[], field: 'alipay' | 'wxpay' | 'total') { return rows.map(row => row[field]) }
 function render() {
   if (rechargeChart.value) {
@@ -18,7 +18,11 @@ function render() {
   }
   if (usageChart.value) {
     usageInstance?.dispose(); usageInstance = echarts.init(usageChart.value)
-    usageInstance.setOption({ tooltip: { trigger: 'axis', formatter: (items: any[]) => { const lines = items.map(item => `${item.marker}${item.seriesName}: ${item.seriesName === '图片总数' ? Number(item.value).toLocaleString('zh-CN') : `¥${Number(item.value).toFixed(2)}`}`); return `${items[0]?.axisValue || ''}<br/>${lines.join('<br/>')}` } }, legend: { data: ['图片总数', '总金额(RMB)', 'Token金额(RMB)'] }, grid: { left: 70, right: 20, top: 42, bottom: 28 }, xAxis: { type: 'category', data: stats.value.usage.map(x => x.date.slice(5)) }, yAxis: [{ type: 'value', name: '数量/金额' }], series: [{ name: '图片总数', type: 'bar', data: stats.value.usage.map(x => x.image_count), itemStyle: { color: '#8b5cf6' } }, { name: '总金额(RMB)', type: 'line', smooth: true, data: stats.value.usage.map(x => x.total_amount), itemStyle: { color: '#ef7d35' } }, { name: 'Token金额(RMB)', type: 'line', smooth: true, data: stats.value.usage.map(x => x.token_amount), itemStyle: { color: '#e74c8b' } }] })
+    usageInstance.setOption({ tooltip: { trigger: 'axis', valueFormatter: (value: number) => `${Number(value).toLocaleString('zh-CN')} 张` }, legend: { data: ['图片总数'] }, grid: { left: 70, right: 20, top: 42, bottom: 28 }, xAxis: { type: 'category', data: stats.value.usage.map(x => x.date.slice(5)) }, yAxis: [{ type: 'value', name: '图片数量' }], series: [{ name: '图片总数', type: 'bar', data: stats.value.usage.map(x => x.image_count), itemStyle: { color: '#8b5cf6' } }] })
+  }
+  if (amountChart.value) {
+    amountInstance?.dispose(); amountInstance = echarts.init(amountChart.value)
+    amountInstance.setOption({ tooltip: { trigger: 'axis', valueFormatter: (value: number) => `¥${Number(value).toFixed(2)}` }, legend: { data: ['图片总金额(RMB)', 'Token金额(RMB)'] }, grid: { left: 70, right: 20, top: 42, bottom: 28 }, xAxis: { type: 'category', data: stats.value.usage.map(x => x.date.slice(5)) }, yAxis: [{ type: 'value', name: 'RMB' }], series: [{ name: '图片总金额(RMB)', type: 'line', smooth: true, data: stats.value.usage.map(x => x.total_amount), itemStyle: { color: '#ef7d35' } }, { name: 'Token金额(RMB)', type: 'line', smooth: true, data: stats.value.usage.map(x => x.token_amount), itemStyle: { color: '#e74c8b' } }] })
   }
 }
 function fillDates<T extends { date: string }>(rows: T[], factory: (date: string) => T) {
@@ -26,10 +30,10 @@ function fillDates<T extends { date: string }>(rows: T[], factory: (date: string
   for (let i = 29; i >= 0; i--) { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - i); const date = d.toISOString().slice(0, 10); out.push(byDate.get(date) || factory(date)) }
   return out
 }
-function resize() { rechargeInstance?.resize(); usageInstance?.resize() }
+function resize() { rechargeInstance?.resize(); usageInstance?.resize(); amountInstance?.resize() }
 async function load() { loading.value = true; error.value = ''; try { const data = (await apiClient.get('/recharge/admin/stats')).data as Stats; stats.value = { ...data, daily: fillDates(data.daily, date => ({ date, alipay: 0, wxpay: 0, total: 0 })), usage: fillDates(data.usage, date => ({ date, image_count: 0, total_amount: 0, token_amount: 0 })) }; render() } catch (e: any) { error.value = e?.response?.data?.message || e?.message || '统计数据加载失败' } finally { loading.value = false } }
 onMounted(() => { load(); window.addEventListener('resize', resize) })
-onUnmounted(() => { window.removeEventListener('resize', resize); rechargeInstance?.dispose(); usageInstance?.dispose() })
+onUnmounted(() => { window.removeEventListener('resize', resize); rechargeInstance?.dispose(); usageInstance?.dispose(); amountInstance?.dispose() })
 </script>
 <template>
   <section class="stats-panel">
@@ -37,7 +41,8 @@ onUnmounted(() => { window.removeEventListener('resize', resize); rechargeInstan
     <div v-if="error" class="message error" role="alert">{{ error }}</div>
     <div class="summary"><div><span>昨日收款总额</span><strong>¥{{ stats.yesterday_total.toFixed(2) }}</strong></div><div><span>今日收款总额</span><strong>¥{{ stats.today_total.toFixed(2) }}</strong></div></div>
     <div class="chart-card"><h3>近 30 天充值总额</h3><div ref="rechargeChart" class="chart"></div></div>
-    <div class="chart-card"><h3>近 30 天每日用量</h3><p class="hint">图片总数和生图金额按每条生图使用记录汇总，金额按 QuotaPerUnit 换算为 RMB；Token金额统计全部调用记录。</p><div ref="usageChart" class="chart"></div></div>
+    <div class="chart-card"><h3>近 30 天图片数量</h3><p class="hint">按使用记录中的 Image count 汇总。</p><div ref="usageChart" class="chart"></div></div>
+    <div class="chart-card"><h3>近 30 天金额</h3><p class="hint">图片总金额按每条生图记录的费用字段（日志 quota）汇总并换算为 RMB；Token金额统计全部调用记录。</p><div ref="amountChart" class="chart"></div></div>
   </section>
 </template>
 <style scoped>
