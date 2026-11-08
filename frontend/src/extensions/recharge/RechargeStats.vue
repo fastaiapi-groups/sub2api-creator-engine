@@ -1,0 +1,45 @@
+<script setup lang="ts">
+import { onMounted, onUnmounted, ref } from 'vue'
+import * as echarts from 'echarts'
+import { apiClient } from '../../api/client'
+
+interface DailyRecharge { date: string; alipay: number; wxpay: number; total: number }
+interface DailyUsage { date: string; image_count: number; total_amount: number; token_amount: number }
+interface Stats { daily: DailyRecharge[]; yesterday_total: number; today_total: number; usage: DailyUsage[] }
+const stats = ref<Stats>({ daily: [], yesterday_total: 0, today_total: 0, usage: [] })
+const error = ref(''), loading = ref(true)
+const rechargeChart = ref<HTMLElement | null>(null), usageChart = ref<HTMLElement | null>(null)
+let rechargeInstance: echarts.ECharts | undefined, usageInstance: echarts.ECharts | undefined
+function chartData(rows: DailyRecharge[], field: 'alipay' | 'wxpay' | 'total') { return rows.map(row => row[field]) }
+function render() {
+  if (rechargeChart.value) {
+    rechargeInstance?.dispose(); rechargeInstance = echarts.init(rechargeChart.value)
+    rechargeInstance.setOption({ tooltip: { trigger: 'axis' }, legend: { data: ['支付宝', '微信支付'] }, grid: { left: 45, right: 20, top: 42, bottom: 28 }, xAxis: { type: 'category', data: stats.value.daily.map(x => x.date.slice(5)) }, yAxis: { type: 'value', name: '人民币' }, series: [{ name: '支付宝', type: 'line', smooth: true, data: chartData(stats.value.daily, 'alipay'), itemStyle: { color: '#168fe1' } }, { name: '微信支付', type: 'line', smooth: true, data: chartData(stats.value.daily, 'wxpay'), itemStyle: { color: '#1aae68' } }] })
+  }
+  if (usageChart.value) {
+    usageInstance?.dispose(); usageInstance = echarts.init(usageChart.value)
+    usageInstance.setOption({ tooltip: { trigger: 'axis' }, legend: { data: ['图片总数', '总金额', 'Token金额'] }, grid: { left: 55, right: 20, top: 42, bottom: 28 }, xAxis: { type: 'category', data: stats.value.usage.map(x => x.date.slice(5)) }, yAxis: [{ type: 'value', name: '数量/金额' }], series: [{ name: '图片总数', type: 'bar', data: stats.value.usage.map(x => x.image_count), itemStyle: { color: '#8b5cf6' } }, { name: '总金额', type: 'line', smooth: true, data: stats.value.usage.map(x => x.total_amount), itemStyle: { color: '#ef7d35' } }, { name: 'Token金额', type: 'line', smooth: true, data: stats.value.usage.map(x => x.token_amount), itemStyle: { color: '#e74c8b' } }] })
+  }
+}
+function fillDates<T extends { date: string }>(rows: T[], factory: (date: string) => T) {
+  const byDate = new Map(rows.map(row => [row.date, row])); const out: T[] = []
+  for (let i = 29; i >= 0; i--) { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - i); const date = d.toISOString().slice(0, 10); out.push(byDate.get(date) || factory(date)) }
+  return out
+}
+function resize() { rechargeInstance?.resize(); usageInstance?.resize() }
+async function load() { loading.value = true; error.value = ''; try { const data = (await apiClient.get('/recharge/admin/stats')).data as Stats; stats.value = { ...data, daily: fillDates(data.daily, date => ({ date, alipay: 0, wxpay: 0, total: 0 })), usage: fillDates(data.usage, date => ({ date, image_count: 0, total_amount: 0, token_amount: 0 })) }; render() } catch (e: any) { error.value = e?.response?.data?.message || e?.message || '统计数据加载失败' } finally { loading.value = false } }
+onMounted(() => { load(); window.addEventListener('resize', resize) })
+onUnmounted(() => { window.removeEventListener('resize', resize); rechargeInstance?.dispose(); usageInstance?.dispose() })
+</script>
+<template>
+  <section class="stats-panel">
+    <div class="stats-heading"><div><h2>充值与用量统计</h2><p>管理员可查看最近 30 天的支付和调用数据。</p></div><button :disabled="loading" @click="load">刷新数据 ↻</button></div>
+    <div v-if="error" class="message error" role="alert">{{ error }}</div>
+    <div class="summary"><div><span>昨日收款总额</span><strong>¥{{ stats.yesterday_total.toFixed(2) }}</strong></div><div><span>今日收款总额</span><strong>¥{{ stats.today_total.toFixed(2) }}</strong></div></div>
+    <div class="chart-card"><h3>近 30 天充值总额</h3><div ref="rechargeChart" class="chart"></div></div>
+    <div class="chart-card"><h3>近 30 天每日用量</h3><p class="hint">总金额与 Token金额按日志中的额度单位统计，图片总数取用量日志 image_count。</p><div ref="usageChart" class="chart"></div></div>
+  </section>
+</template>
+<style scoped>
+.stats-panel{background:#fff;border:1px solid #e3e9f2;border-radius:12px;padding:18px;color:#34435b}.stats-heading{display:flex;align-items:center;justify-content:space-between;gap:20px}.stats-heading h2{margin:0;font-size:22px}.stats-heading p{font-size:12px;color:#8b96a7;margin:5px 0 0}.stats-panel button{border:1px solid #dfe3ec;background:#fff;color:#353b49;border-radius:8px;padding:9px 13px;font-size:12px}.summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:20px 0 14px}.summary>div{background:#f7f9fd;border:1px solid #e3e9f2;border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:7px}.summary span{font-size:12px;color:#8995a7}.summary strong{font-size:25px;color:#2864e8}.chart-card{border:1px solid #e3e9f2;border-radius:10px;padding:14px;margin-top:14px}.chart-card h3{font-size:14px;margin:0 0 4px}.hint{font-size:11px;color:#8b96a7;margin:0}.chart{height:300px;margin-top:8px}.message{padding:12px;border-radius:8px;margin-top:14px}.error{background:#fff0f0;color:#ad3333}@media(max-width:600px){.stats-heading{align-items:flex-start}.summary{grid-template-columns:1fr}.chart{height:240px}}
+</style>

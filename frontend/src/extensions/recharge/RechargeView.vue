@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { apiClient, getAuthToken } from '../../api/client'
 import RechargeAdmin from './RechargeAdmin.vue'
+import RechargeStats from './RechargeStats.vue'
 import RechargeDialog from './RechargeDialog.vue'
 import RechargeOrders from './RechargeOrders.vue'
 import RechargeLogs from './RechargeLogs.vue'
@@ -77,7 +78,7 @@ async function manualRefresh() { error.value = ''; try { await refresh() } catch
 
 <template>
   <div class="recharge">
-    <header><div class="nav"><a class="brand" href="/fastaiui/recharge"><i>↗</i> 充值中心</a><nav aria-label="充值导航"><button :class="{ active: tab === 'products' }" @click="tab = 'products'">总览</button><button :class="{ active: tab === 'orders' }" @click="tab = 'orders'">充值记录</button><button :class="{ active: tab === 'logs' }" @click="tab = 'logs'">到账日志</button><button v-if="isAdmin" :class="{ active: tab === 'admin' }" @click="tab = 'admin'">充值管理 <small>管理员</small></button></nav><a v-if="isAdmin" class="back" href="/fastaiui/admin/client-releases">客户端发布 ↗</a><a class="back" href="/fastaiui/">返回绘画 ↗</a></div></header>
+    <header><div class="nav"><a class="brand" href="/fastaiui/recharge"><i>↗</i> 充值中心</a><nav aria-label="充值导航"><button :class="{ active: tab === 'products' }" @click="tab = 'products'">总览</button><button :class="{ active: tab === 'orders' }" @click="tab = 'orders'">充值记录</button><button :class="{ active: tab === 'logs' }" @click="tab = 'logs'">到账日志</button><button v-if="isAdmin" :class="{ active: tab === 'admin' }" @click="tab = 'admin'">充值管理 <small>管理员</small></button><button v-if="isAdmin" :class="{ active: tab === 'stats' }" @click="tab = 'stats'">数据统计 <small>管理员</small></button></nav><a v-if="isAdmin" class="back" href="/fastaiui/admin/client-releases">客户端发布 ↗</a><a class="back" href="/fastaiui/">返回绘画 ↗</a></div></header>
     <main>
       <section class="page-heading"><div><h1>自动充值</h1><p>选择套餐，按订单金额扫码支付，渠道确认后自动到账。</p></div><div class="identity" v-if="authenticated"><span>{{ email }}</span><span class="role">{{ isAdmin ? '管理员账号' : '仅显示我的数据' }}</span><button class="refresh" @click="manualRefresh">刷新 ↻</button></div><a v-else class="login" href="/login">登录后充值 →</a></section>
       <div v-if="error" class="alert error" role="alert">{{ error }}<button @click="error = ''">关闭</button></div><div v-if="notice" class="alert" role="status">{{ notice }}<button @click="notice = ''">关闭</button></div>
@@ -87,6 +88,7 @@ async function manualRefresh() { error.value = ''; try { await refresh() } catch
         <div class="workspace"><section class="panel"><div class="panel-heading"><h2>我的充值记录 <b>{{ orders.length }}</b></h2><button class="text-button" @click="tab='orders'">查看记录 →</button></div><RechargeOrders :orders="orders" :busy="busy" :page-size="3" @resume="resume" @recheck="recheck"/></section><section class="panel"><div class="panel-heading"><h2>我的到账日志 <b>{{ logs.length }}</b></h2><button class="text-button" @click="tab='logs'">查看日志 →</button></div><RechargeLogs :logs="logs" :page-size="3"/></section></div>
       </template>
       <RechargeAdmin v-else-if="tab === 'admin' && isAdmin"/>
+      <RechargeStats v-else-if="tab === 'stats' && isAdmin"/>
       <section v-else class="panel"><div class="panel-heading"><h2>{{ tab === 'orders' ? '我的充值记录' : '我的到账日志' }}</h2><span>仅当前账号 · 最近 100 条 · 分页展示</span></div><p v-if="!authenticated" class="empty">请先登录以查看自己的记录。</p><RechargeOrders v-else-if="tab==='orders'" :orders="orders" :busy="busy" :page-size="8" @resume="resume" @recheck="recheck"/><RechargeLogs v-else :logs="logs" :page-size="8"/></section>
       <footer>渠道确认订单支付成功后自动入账。普通用户仅可查看自己的订单；充值管理仅管理员可用。<span>技术交流 QQ 群：48878665</span></footer>
     </main><RechargeDialog v-if="checkoutOpen" :product="selectedProduct" :existing-order="selectedOrder" :email="email" @close="closeCheckout" @paid="paymentCompleted"/>

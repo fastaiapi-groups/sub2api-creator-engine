@@ -138,9 +138,10 @@ func (s *Service) IsAdmin(ctx context.Context, uid int64) bool {
 
 type AdminOrder struct {
 	Order
-	OwnerID     int64 `json:"user_id"`
-	CacheSynced bool  `json:"cache_synced"`
-	OpenIssues  int   `json:"open_issues"`
+	OwnerID     int64  `json:"user_id"`
+	OwnerEmail  string `json:"user_email"`
+	CacheSynced bool   `json:"cache_synced"`
+	OpenIssues  int    `json:"open_issues"`
 }
 
 func (s *Service) AdminOrders(ctx context.Context) ([]AdminOrder, error) {
@@ -160,6 +161,48 @@ func (s *Service) AdminOrders(ctx context.Context) ([]AdminOrder, error) {
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+type DailyRecharge struct {
+	Date   string  `json:"date"`
+	Alipay float64 `json:"alipay"`
+	Wxpay  float64 `json:"wxpay"`
+	Total  float64 `json:"total"`
+}
+
+func (s *Service) DailyRecharge(ctx context.Context) ([]DailyRecharge, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT to_char(COALESCE(paid_at, created_at) AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD'), payment_type, COALESCE(sum(COALESCE(paid_amount_cents, amount_cents)),0) / 100.0 FROM sub_adds_recharge_orders WHERE status='paid' AND reversed_at IS NULL AND COALESCE(paid_at, created_at) >= now()-interval '30 days' GROUP BY 1,2 ORDER BY 1`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	byDate := map[string]*DailyRecharge{}
+	order := []string{}
+	for rows.Next() {
+		var date, payment string
+		var amount float64
+		if err := rows.Scan(&date, &payment, &amount); err != nil {
+			return nil, err
+		}
+		v := byDate[date]
+		if v == nil {
+			v = &DailyRecharge{Date: date}
+			byDate[date] = v
+			order = append(order, date)
+		}
+		switch payment {
+		case "alipay":
+			v.Alipay += amount
+		case "wxpay":
+			v.Wxpay += amount
+		}
+		v.Total += amount
+	}
+	result := make([]DailyRecharge, 0, len(order))
+	for _, date := range order {
+		result = append(result, *byDate[date])
+	}
+	return result, rows.Err()
 }
 func (s *Service) runReconciliation(ctx context.Context) {
 	tick := time.NewTicker(10 * time.Second)

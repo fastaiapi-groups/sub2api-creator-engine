@@ -110,7 +110,7 @@ onUnmounted(() => {
         <div class="account"><span>充值账号</span><strong>{{ email }}</strong></div>
         <div class="summary"><div><span>到账额度</span><strong>${{ credit }} <small>USD</small></strong></div><div><span>支付金额</span><strong class="amount">¥{{ amount }}</strong></div></div>
         <fieldset><legend>选择支付方式</legend>
-          <label :class="{ selected: channel === 'alipay' }"><input v-model="channel" :disabled="attempted" type="radio" name="checkout-channel" value="alipay"><i class="alipay">支</i><span>支付宝</span><b>{{ channel === 'alipay' ? '●' : '○' }}</b></label>
+          <label :class="{ selected: channel === 'alipay' }"><input v-model="channel" :disabled="attempted" type="radio" name="checkout-channel" value="alipay"><i class="alipay">支</i><span>支付宝(推荐长期稳定)</span><b>{{ channel === 'alipay' ? '●' : '○' }}</b></label>
           <label :class="{ selected: channel === 'wxpay' }"><input v-model="channel" :disabled="attempted" type="radio" name="checkout-channel" value="wxpay"><i class="wxpay">微</i><span>微信支付</span><b>{{ channel === 'wxpay' ? '●' : '○' }}</b></label>
         </fieldset>
         <p class="payment-warning" role="note"><strong>支付金额必须与下单金额一致，否则无法自动到账。</strong>请按 ¥{{ amount }} 支付，勿修改付款金额。</p>

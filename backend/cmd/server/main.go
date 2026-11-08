@@ -27,6 +27,7 @@ const authMePath = "/api/v1/auth/me"
 
 type app struct {
 	db            *sql.DB
+	sub2db        *sql.DB
 	base          string
 	client        *http.Client
 	conversations *chatimage.SQLRepository
@@ -51,6 +52,14 @@ func main() {
 		log.Fatal("FASTAIAPI_BASE_URL is required")
 	}
 	a := &app{db: db, base: base, client: &http.Client{Timeout: 10 * time.Minute}, conversations: chatimage.NewSQLRepository(db), gallery: gallery.NewSQLRepository(db)}
+	if sub2URL := os.Getenv("SUB2API_DATABASE_URL"); sub2URL != "" {
+		var subErr error
+		a.sub2db, subErr = sql.Open("pgx", sub2URL)
+		if subErr != nil {
+			log.Fatal(subErr)
+		}
+		defer a.sub2db.Close()
+	}
 	if os.Getenv("RECHARGE_ENABLED") == "true" && os.Getenv("CLIENT_UPDATES_ONLY") != "true" {
 		cfg, err := recharge.LoadConfig()
 		if err != nil {

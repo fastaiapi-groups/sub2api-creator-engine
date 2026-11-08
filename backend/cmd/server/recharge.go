@@ -69,6 +69,11 @@ func (a *app) rechargeRoute(w http.ResponseWriter, r *http.Request) {
 			failText(w, 403, "需要管理员权限")
 			return
 		}
+		if strings.TrimPrefix(p, "admin/") == "stats" && r.Method == "GET" {
+			v, e := a.rechargeStats(ctx)
+			result(v, e)
+			return
+		}
 		a.rechargeAdmin(w, r, ctx, uid, strings.TrimPrefix(p, "admin/"), result)
 		return
 	}
@@ -154,6 +159,9 @@ func (a *app) rechargeAdmin(w http.ResponseWriter, r *http.Request, ctx context.
 		switch p {
 		case "orders":
 			v, e := a.recharge.AdminOrders(ctx)
+			if e == nil {
+				e = a.enrichAdminOrders(ctx, v)
+			}
 			result(v, e)
 		case "issues":
 			v, e := a.recharge.Issues(ctx)
