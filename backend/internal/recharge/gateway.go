@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 var (
@@ -56,6 +57,33 @@ type gatewayOrder struct {
 	Money      scalar `json:"money"`
 	Price      scalar `json:"price"`
 	Status     scalar `json:"status"`
+}
+
+type ChannelStatus struct {
+	PaymentType string `json:"payment_type"`
+	Available   bool   `json:"available"`
+}
+
+// ChannelStatus checks whether the configured gateway is responding. The gateway
+// returns a normal business response for an unknown order, which is sufficient to
+// distinguish an online channel service from a network/platform outage.
+func (s *Service) ChannelStatus(ctx context.Context) []ChannelStatus {
+	out := make([]ChannelStatus, 0, 2)
+	for _, paymentType := range []string{"alipay", "wxpay"} {
+		form := url.Values{"act": {"order"}, "pid": {s.cfg.PID}, "key": {s.cfg.Key}, "out_trade_no": {fmt.Sprintf("health-%s-%d", paymentType, time.Now().UnixNano())}}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(s.cfg.Gateway, "/")+"/api.php", strings.NewReader(form.Encode()))
+		available := false
+		if err == nil {
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			resp, requestErr := s.client.Do(req)
+			if requestErr == nil {
+				available = resp.StatusCode == http.StatusOK
+				resp.Body.Close()
+			}
+		}
+		out = append(out, ChannelStatus{PaymentType: paymentType, Available: available})
+	}
+	return out
 }
 
 func (s *Service) queryOrder(ctx context.Context, id string) (gatewayOrder, error) {

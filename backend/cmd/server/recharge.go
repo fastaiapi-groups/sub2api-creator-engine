@@ -27,6 +27,12 @@ func (a *app) rechargeRoute(w http.ResponseWriter, r *http.Request) {
 		success(w, a.recharge.Packages())
 		return
 	}
+	if p == "channel-status" && r.Method == "GET" {
+		ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+		defer cancel()
+		success(w, a.recharge.ChannelStatus(ctx))
+		return
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	uid, ok := a.userID(w, r)
 	if !ok {
