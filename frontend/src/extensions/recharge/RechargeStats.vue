@@ -37,7 +37,7 @@ onUnmounted(() => { window.removeEventListener('resize', resize); rechargeInstan
     <div v-if="error" class="message error" role="alert">{{ error }}</div>
     <div class="summary"><div><span>昨日收款总额</span><strong>¥{{ stats.yesterday_total.toFixed(2) }}</strong></div><div><span>今日收款总额</span><strong>¥{{ stats.today_total.toFixed(2) }}</strong></div></div>
     <div class="chart-card"><h3>近 30 天充值总额</h3><div ref="rechargeChart" class="chart"></div></div>
-    <div class="chart-card"><h3>近 30 天每日用量</h3><p class="hint">总金额与 Token金额按日志中的额度单位统计，图片总数取用量日志 image_count。</p><div ref="usageChart" class="chart"></div></div>
+    <div class="chart-card"><h3>近 30 天每日用量</h3><p class="hint">总金额与 Token金额按站点 QuotaPerUnit 换算，图片总数取用量日志 image_count。</p><div ref="usageChart" class="chart"></div></div>
   </section>
 </template>
 <style scoped>

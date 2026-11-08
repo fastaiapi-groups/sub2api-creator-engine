@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"sub-adds/backend/internal/recharge"
 	"time"
 )
@@ -54,6 +55,13 @@ func (a *app) rechargeStats(ctx context.Context) (rechargeStats, error) {
 	if a.sub2db == nil {
 		return stats, nil
 	}
+	quotaPerUnit := 1.0
+	var quotaPerUnitText string
+	if err := a.sub2db.QueryRowContext(ctx, `SELECT value FROM options WHERE key='QuotaPerUnit' LIMIT 1`).Scan(&quotaPerUnitText); err == nil {
+		if parsed, parseErr := strconv.ParseFloat(quotaPerUnitText, 64); parseErr == nil && parsed > 0 {
+			quotaPerUnit = parsed
+		}
+	}
 	rows, err := a.sub2db.QueryContext(ctx, `SELECT to_char(to_timestamp(created_at) AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD'), COALESCE(sum(quota),0), COALESCE(sum(prompt_tokens)+sum(completion_tokens),0), COALESCE(sum(CASE WHEN COALESCE(NULLIF(other::jsonb->>'image_count',''),'0') ~ '^[0-9]+(\\.[0-9]+)?$' THEN (other::jsonb->>'image_count')::numeric ELSE 0 END),0) FROM logs WHERE type=2 AND created_at >= extract(epoch FROM now()-interval '30 days') GROUP BY 1 ORDER BY 1`)
 	if err != nil {
 		return stats, fmt.Errorf("usage statistics unavailable: %w", err)
@@ -64,6 +72,8 @@ func (a *app) rechargeStats(ctx context.Context) (rechargeStats, error) {
 		if err := rows.Scan(&item.Date, &item.TotalAmount, &item.TokenAmount, &item.ImageCount); err != nil {
 			return stats, err
 		}
+		item.TotalAmount /= quotaPerUnit
+		item.TokenAmount /= quotaPerUnit
 		stats.Usage = append(stats.Usage, item)
 	}
 	return stats, rows.Err()
