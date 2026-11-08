@@ -42,6 +42,9 @@ func (a *app) rechargeStats(ctx context.Context) (rechargeStats, error) {
 	}
 	stats := rechargeStats{Daily: daily, Usage: make([]dailyUsage, 0, 30)}
 	loc, _ := time.LoadLocation("Asia/Shanghai")
+	if loc == nil {
+		loc = time.FixedZone("Asia/Shanghai", 8*60*60)
+	}
 	today := time.Now().In(loc).Format("2006-01-02")
 	yesterday := time.Now().In(loc).AddDate(0, 0, -1).Format("2006-01-02")
 	for _, item := range daily {
