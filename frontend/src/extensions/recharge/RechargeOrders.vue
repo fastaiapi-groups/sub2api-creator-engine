@@ -6,7 +6,7 @@ defineEmits<{ resume: [order: Order]; recheck: [order: Order] }>()
 const page = ref(1), pages = computed(() => Math.max(1,Math.ceil(props.orders.length/props.pageSize)))
 watch(pages, n => {page.value=Math.min(page.value,n)})
 const rows = computed(() => props.orders.slice((page.value-1)*props.pageSize,page.value*props.pageSize))
-const time = (s:string) => new Date(s).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})
+const time = (s:string) => new Date(s).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})
 const money = (n:number) => (n/100).toFixed(2)
 const credit = (o:Order) => o.credited_credit ?? (o.status==='paid' ? o.credit : null)
 const label = (o:Order) => o.reversed_at ? '已退款' : o.status==='paid' ? '已到账' : o.gateway_status==='expired' ? '已过期' : '待支付'

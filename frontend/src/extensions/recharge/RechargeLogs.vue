@@ -8,7 +8,7 @@ const rows=computed(() => props.logs.slice((page.value-1)*props.pageSize,page.va
 const events:Record<string,string>={credited:'余额已入账',created:'订单创建',exception:'订单异常',recheck_requested:'查询付款',issue_resolved:'异常已处理',refund_registered:'退款已冲正',refund_requested:'退款登记'}
 function detail(l:Log){try{const d=JSON.parse(l.detail);if(l.event==='credited')return `到账 $${Number(d.credit)}${d.paid_amount_cents!=null ? ` · 实付 ¥${(d.paid_amount_cents/100).toFixed(2)}` : ''} · 余额 $${Number(d.balance_after)}`;if(l.event==='refund_registered')return `扣回 $${Number(d.debit)} · ${d.reason}`;if(d.reason)return d.reason}catch{}return l.detail}
 function reference(l:Log){try{const d=JSON.parse(l.detail);return d.trade_no ? `流水 ${d.trade_no}` : d.refund_reference ? `退款凭证 ${d.refund_reference}` : ''}catch{return ''}}
-const time=(s:string)=>new Date(s).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})
+const time=(s:string)=>new Date(s).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})
 const copied = ref('')
 async function copyChannelNo(l: Log) {
  if (!l.channel_trade_no) return
