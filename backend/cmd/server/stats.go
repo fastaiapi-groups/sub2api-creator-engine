@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"sub-adds/backend/internal/recharge"
 	"time"
@@ -73,21 +74,52 @@ func (a *app) rechargeStats(ctx context.Context, authorization string) (recharge
 	if logDB == nil {
 		logDB = a.sub2db
 	}
-	rows, err := logDB.QueryContext(ctx, `SELECT to_char(to_timestamp(created_at) AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD'), COALESCE(sum(quota),0), COALESCE(sum(prompt_tokens)+sum(completion_tokens),0), COALESCE(sum(CASE WHEN COALESCE(NULLIF(other::jsonb->>'image_count',''),'0') ~ '^[0-9]+(\\.[0-9]+)?$' THEN (other::jsonb->>'image_count')::numeric ELSE 0 END),0) FROM logs WHERE type=2 AND created_at >= extract(epoch FROM now()-interval '30 days') GROUP BY 1 ORDER BY 1`)
+	rows, err := logDB.QueryContext(ctx, `SELECT to_char(to_timestamp(created_at) AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD'), COALESCE(sum(quota),0), COALESCE(sum(prompt_tokens)+sum(completion_tokens),0) FROM logs WHERE type=2 AND created_at >= extract(epoch FROM now()-interval '30 days') GROUP BY 1 ORDER BY 1`)
 	if err != nil {
 		return a.remoteUsageStats(ctx, authorization, stats, quotaPerUnit)
 	}
 	defer rows.Close()
+	usageByDate := make(map[string]*dailyUsage)
 	for rows.Next() {
 		var item dailyUsage
-		if err := rows.Scan(&item.Date, &item.TotalAmount, &item.TokenAmount, &item.ImageCount); err != nil {
+		if err := rows.Scan(&item.Date, &item.TotalAmount, &item.TokenAmount); err != nil {
 			return stats, err
 		}
 		item.TotalAmount /= quotaPerUnit
 		item.TokenAmount /= quotaPerUnit
-		stats.Usage = append(stats.Usage, item)
+		usageByDate[item.Date] = &item
 	}
-	return stats, rows.Err()
+	if err := rows.Err(); err != nil {
+		return stats, err
+	}
+	imageRows, err := logDB.QueryContext(ctx, `SELECT to_char(to_timestamp(created_at) AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD'), COALESCE(sum((other::jsonb->>'image_count')::numeric),0) FROM logs WHERE type=2 AND created_at >= extract(epoch FROM now()-interval '30 days') AND other LIKE '%image_count%' GROUP BY 1`)
+	if err != nil {
+		return a.remoteUsageStats(ctx, authorization, stats, quotaPerUnit)
+	}
+	for imageRows.Next() {
+		var date string
+		var count float64
+		if err := imageRows.Scan(&date, &count); err != nil {
+			imageRows.Close()
+			return stats, err
+		}
+		item := usageByDate[date]
+		if item == nil {
+			item = &dailyUsage{Date: date}
+			usageByDate[date] = item
+		}
+		item.ImageCount = count
+	}
+	if err := imageRows.Err(); err != nil {
+		imageRows.Close()
+		return stats, err
+	}
+	imageRows.Close()
+	for _, item := range usageByDate {
+		stats.Usage = append(stats.Usage, *item)
+	}
+	sort.Slice(stats.Usage, func(i, j int) bool { return stats.Usage[i].Date < stats.Usage[j].Date })
+	return stats, nil
 }
 
 type remoteLog struct {
