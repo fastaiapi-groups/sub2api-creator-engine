@@ -3,8 +3,13 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"sub-adds/backend/internal/recharge"
 	"time"
 )
@@ -35,7 +40,7 @@ func (a *app) enrichAdminOrders(ctx context.Context, orders []recharge.AdminOrde
 	return nil
 }
 
-func (a *app) rechargeStats(ctx context.Context) (rechargeStats, error) {
+func (a *app) rechargeStats(ctx context.Context, authorization string) (rechargeStats, error) {
 	daily, err := a.recharge.DailyRecharge(ctx)
 	if err != nil {
 		return rechargeStats{}, err
@@ -67,7 +72,7 @@ func (a *app) rechargeStats(ctx context.Context) (rechargeStats, error) {
 	}
 	rows, err := a.sub2db.QueryContext(ctx, `SELECT to_char(to_timestamp(created_at) AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD'), COALESCE(sum(quota),0), COALESCE(sum(prompt_tokens)+sum(completion_tokens),0), COALESCE(sum(CASE WHEN COALESCE(NULLIF(other::jsonb->>'image_count',''),'0') ~ '^[0-9]+(\\.[0-9]+)?$' THEN (other::jsonb->>'image_count')::numeric ELSE 0 END),0) FROM logs WHERE type=2 AND created_at >= extract(epoch FROM now()-interval '30 days') GROUP BY 1 ORDER BY 1`)
 	if err != nil {
-		return stats, fmt.Errorf("usage statistics unavailable: %w", err)
+		return a.remoteUsageStats(ctx, authorization, stats, quotaPerUnit)
 	}
 	defer rows.Close()
 	for rows.Next() {
@@ -80,4 +85,77 @@ func (a *app) rechargeStats(ctx context.Context) (rechargeStats, error) {
 		stats.Usage = append(stats.Usage, item)
 	}
 	return stats, rows.Err()
+}
+
+type remoteLog struct {
+	CreatedAt        int64  `json:"created_at"`
+	Quota            int64  `json:"quota"`
+	PromptTokens     int64  `json:"prompt_tokens"`
+	CompletionTokens int64  `json:"completion_tokens"`
+	Other            string `json:"other"`
+}
+
+func (a *app) remoteUsageStats(ctx context.Context, authorization string, stats rechargeStats, quotaPerUnit float64) (rechargeStats, error) {
+	if authorization == "" {
+		return stats, fmt.Errorf("usage statistics unavailable")
+	}
+	loc, _ := time.LoadLocation("Asia/Shanghai")
+	if loc == nil {
+		loc = time.FixedZone("Asia/Shanghai", 8*60*60)
+	}
+	start := time.Now().In(loc).AddDate(0, 0, -29).Truncate(24 * time.Hour).Unix()
+	byDate := map[string]*dailyUsage{}
+	for page := 1; page <= 100; page++ {
+		u := a.base + "/api/v1/log/?" + url.Values{"p": {strconv.Itoa(page)}, "page_size": {"100"}, "type": {"2"}, "start_timestamp": {strconv.FormatInt(start, 10)}}.Encode()
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+		if err != nil {
+			return stats, err
+		}
+		req.Header.Set("Authorization", authorization)
+		resp, err := a.client.Do(req)
+		if err != nil {
+			return stats, err
+		}
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+		resp.Body.Close()
+		if readErr != nil {
+			return stats, readErr
+		}
+		if resp.StatusCode != http.StatusOK {
+			return stats, fmt.Errorf("usage API returned %d", resp.StatusCode)
+		}
+		var envelope struct {
+			Data struct {
+				Items []remoteLog `json:"items"`
+				Total int         `json:"total"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(body, &envelope); err != nil {
+			return stats, err
+		}
+		items := envelope.Data.Items
+		for _, logItem := range items {
+			date := time.Unix(logItem.CreatedAt, 0).In(loc).Format("2006-01-02")
+			v := byDate[date]
+			if v == nil {
+				v = &dailyUsage{Date: date}
+				byDate[date] = v
+			}
+			v.TotalAmount += float64(logItem.Quota) / quotaPerUnit
+			v.TokenAmount += float64(logItem.PromptTokens+logItem.CompletionTokens) / quotaPerUnit
+			var other map[string]any
+			if json.Unmarshal([]byte(logItem.Other), &other) == nil {
+				if n, ok := other["image_count"].(float64); ok {
+					v.ImageCount += n
+				}
+			}
+		}
+		if len(items) == 0 || page*100 >= envelope.Data.Total {
+			break
+		}
+	}
+	for _, v := range byDate {
+		stats.Usage = append(stats.Usage, *v)
+	}
+	return stats, nil
 }

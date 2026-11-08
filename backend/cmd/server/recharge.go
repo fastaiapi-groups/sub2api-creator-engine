@@ -70,7 +70,7 @@ func (a *app) rechargeRoute(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if strings.TrimPrefix(p, "admin/") == "stats" && r.Method == "GET" {
-			v, e := a.rechargeStats(ctx)
+			v, e := a.rechargeStats(ctx, r.Header.Get("Authorization"))
 			result(v, e)
 			return
 		}
