@@ -9,7 +9,11 @@ const channel = ref(props.existingOrder?.payment_type || 'alipay'), order = ref<
 const phase = ref<'confirm' | 'loading' | 'qr' | 'waiting' | 'success' | 'expired'>('confirm')
 const attempted = ref(false)
 const submitting = ref(false), checking = ref(false), error = ref(''), qrImage = ref(''), paused = ref(false)
-const modal = ref<HTMLElement | null>(null), requestID = crypto.randomUUID(), controller = new AbortController()
+const modal = ref<HTMLElement | null>(null)
+const requestID = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+  ? crypto.randomUUID()
+  : `recharge-${Date.now()}-${Math.random().toString(36).slice(2)}`
+const controller = new AbortController()
 let timer: ReturnType<typeof setTimeout> | undefined, disposed = false, paidEmitted = false, polling = false, pollCount = 0
 let previousFocus: Element | null, previousOverflow = ''
 const amount = computed(() => ((order.value?.amount_cents ?? props.product?.amount_cents ?? 0) / 100).toFixed(2))
