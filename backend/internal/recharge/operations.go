@@ -158,6 +158,9 @@ func (s *Service) AdminOrders(ctx context.Context) ([]AdminOrder, error) {
 			return nil, err
 		}
 		a.OwnerID = a.UserID
+		if a.TradeNo.Valid {
+			a.ChannelTradeNo = a.TradeNo.String
+		}
 		out = append(out, a)
 	}
 	return out, rows.Err()

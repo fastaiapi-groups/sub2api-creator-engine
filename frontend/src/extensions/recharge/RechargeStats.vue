@@ -14,11 +14,11 @@ function chartData(rows: DailyRecharge[], field: 'alipay' | 'wxpay' | 'total') {
 function render() {
   if (rechargeChart.value) {
     rechargeInstance?.dispose(); rechargeInstance = echarts.init(rechargeChart.value)
-    rechargeInstance.setOption({ tooltip: { trigger: 'axis' }, legend: { data: ['支付宝', '微信支付'] }, grid: { left: 45, right: 20, top: 42, bottom: 28 }, xAxis: { type: 'category', data: stats.value.daily.map(x => x.date.slice(5)) }, yAxis: { type: 'value', name: '人民币' }, series: [{ name: '支付宝', type: 'line', smooth: true, data: chartData(stats.value.daily, 'alipay'), itemStyle: { color: '#168fe1' } }, { name: '微信支付', type: 'line', smooth: true, data: chartData(stats.value.daily, 'wxpay'), itemStyle: { color: '#1aae68' } }] })
+    rechargeInstance.setOption({ tooltip: { trigger: 'axis', valueFormatter: (value: number) => `¥${value.toFixed(2)}` }, legend: { data: ['支付宝', '微信支付'] }, grid: { left: 55, right: 20, top: 42, bottom: 28 }, xAxis: { type: 'category', data: stats.value.daily.map(x => x.date.slice(5)) }, yAxis: { type: 'value', name: 'RMB' }, series: [{ name: '支付宝', type: 'line', smooth: true, data: chartData(stats.value.daily, 'alipay'), itemStyle: { color: '#168fe1' } }, { name: '微信支付', type: 'line', smooth: true, data: chartData(stats.value.daily, 'wxpay'), itemStyle: { color: '#1aae68' } }] })
   }
   if (usageChart.value) {
     usageInstance?.dispose(); usageInstance = echarts.init(usageChart.value)
-    usageInstance.setOption({ tooltip: { trigger: 'axis' }, legend: { data: ['图片总数', '总金额', 'Token金额'] }, grid: { left: 55, right: 20, top: 42, bottom: 28 }, xAxis: { type: 'category', data: stats.value.usage.map(x => x.date.slice(5)) }, yAxis: [{ type: 'value', name: '数量/金额' }], series: [{ name: '图片总数', type: 'bar', data: stats.value.usage.map(x => x.image_count), itemStyle: { color: '#8b5cf6' } }, { name: '总金额', type: 'line', smooth: true, data: stats.value.usage.map(x => x.total_amount), itemStyle: { color: '#ef7d35' } }, { name: 'Token金额', type: 'line', smooth: true, data: stats.value.usage.map(x => x.token_amount), itemStyle: { color: '#e74c8b' } }] })
+    usageInstance.setOption({ tooltip: { trigger: 'axis', formatter: (items: any[]) => { const lines = items.map(item => `${item.marker}${item.seriesName}: ${item.seriesName === '图片总数' ? Number(item.value).toLocaleString('zh-CN') : `¥${Number(item.value).toFixed(2)}`}`); return `${items[0]?.axisValue || ''}<br/>${lines.join('<br/>')}` } }, legend: { data: ['图片总数', '总金额(RMB)', 'Token金额(RMB)'] }, grid: { left: 70, right: 20, top: 42, bottom: 28 }, xAxis: { type: 'category', data: stats.value.usage.map(x => x.date.slice(5)) }, yAxis: [{ type: 'value', name: '数量/金额' }], series: [{ name: '图片总数', type: 'bar', data: stats.value.usage.map(x => x.image_count), itemStyle: { color: '#8b5cf6' } }, { name: '总金额(RMB)', type: 'line', smooth: true, data: stats.value.usage.map(x => x.total_amount), itemStyle: { color: '#ef7d35' } }, { name: 'Token金额(RMB)', type: 'line', smooth: true, data: stats.value.usage.map(x => x.token_amount), itemStyle: { color: '#e74c8b' } }] })
   }
 }
 function fillDates<T extends { date: string }>(rows: T[], factory: (date: string) => T) {
@@ -37,7 +37,7 @@ onUnmounted(() => { window.removeEventListener('resize', resize); rechargeInstan
     <div v-if="error" class="message error" role="alert">{{ error }}</div>
     <div class="summary"><div><span>昨日收款总额</span><strong>¥{{ stats.yesterday_total.toFixed(2) }}</strong></div><div><span>今日收款总额</span><strong>¥{{ stats.today_total.toFixed(2) }}</strong></div></div>
     <div class="chart-card"><h3>近 30 天充值总额</h3><div ref="rechargeChart" class="chart"></div></div>
-    <div class="chart-card"><h3>近 30 天每日用量</h3><p class="hint">总金额与 Token金额按站点 QuotaPerUnit 换算，图片总数取用量日志 image_count。</p><div ref="usageChart" class="chart"></div></div>
+    <div class="chart-card"><h3>近 30 天每日用量</h3><p class="hint">图片总数按使用记录中的 Image count 汇总，金额按 QuotaPerUnit 换算为 RMB。</p><div ref="usageChart" class="chart"></div></div>
   </section>
 </template>
 <style scoped>

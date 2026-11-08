@@ -63,9 +63,13 @@ func (a *app) rechargeStats(ctx context.Context, authorization string) (recharge
 	if a.sub2db == nil {
 		return stats, nil
 	}
-	quotaPerUnit := 1.0
+	quotaPerUnit := 500000.0
 	var quotaPerUnitText string
-	if err := a.sub2db.QueryRowContext(ctx, `SELECT value FROM options WHERE key='QuotaPerUnit' LIMIT 1`).Scan(&quotaPerUnitText); err == nil {
+	optionDB := a.newapiDB
+	if optionDB == nil {
+		optionDB = a.sub2db
+	}
+	if err := optionDB.QueryRowContext(ctx, `SELECT value FROM options WHERE key='QuotaPerUnit' LIMIT 1`).Scan(&quotaPerUnitText); err == nil {
 		if parsed, parseErr := strconv.ParseFloat(quotaPerUnitText, 64); parseErr == nil && parsed > 0 {
 			quotaPerUnit = parsed
 		}
@@ -92,7 +96,7 @@ func (a *app) rechargeStats(ctx context.Context, authorization string) (recharge
 	if err := rows.Err(); err != nil {
 		return stats, err
 	}
-	imageRows, err := logDB.QueryContext(ctx, `SELECT to_char(to_timestamp(created_at) AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD'), COALESCE(sum((other::jsonb->>'image_count')::numeric),0) FROM logs WHERE type=2 AND created_at >= extract(epoch FROM now()-interval '30 days') AND other LIKE '%image_count%' GROUP BY 1`)
+	imageRows, err := logDB.QueryContext(ctx, `SELECT to_char(to_timestamp(created_at) AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD'), COALESCE(sum((substring(other from '\"params\":\\{\"count\":([0-9]+(\\.[0-9]+)?)')::numeric)),0) FROM logs WHERE type=2 AND created_at >= extract(epoch FROM now()-interval '30 days') AND other LIKE '%Image count%' GROUP BY 1`)
 	if err != nil {
 		return a.remoteUsageStats(ctx, authorization, stats, quotaPerUnit)
 	}

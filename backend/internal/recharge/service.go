@@ -41,6 +41,7 @@ type Order struct {
 	PaymentType     string         `json:"payment_type"`
 	Status          string         `json:"status"`
 	TradeNo         sql.NullString `json:"-"`
+	ChannelTradeNo  string         `json:"channel_trade_no"`
 	CreatedAt       time.Time      `json:"created_at"`
 	PaidAt          *time.Time     `json:"paid_at"`
 	LastCheckedAt   *time.Time     `json:"last_checked_at"`
@@ -88,6 +89,9 @@ func orderTargets(o *Order) []any {
 }
 func scanOrder(row interface{ Scan(...any) error }) (o Order, err error) {
 	err = row.Scan(orderTargets(&o)...)
+	if err == nil && o.TradeNo.Valid {
+		o.ChannelTradeNo = o.TradeNo.String
+	}
 	return
 }
 
@@ -190,7 +194,11 @@ func (s *Service) Logs(ctx context.Context, uid int64) ([]map[string]any, error)
 		if err = rows.Scan(&id, &event, &detail, &t); err != nil {
 			return nil, err
 		}
-		out = append(out, map[string]any{"order_id": id, "event": event, "detail": detail, "created_at": t})
+		var paymentType, tradeNo sql.NullString
+		if err = s.db.QueryRowContext(ctx, `SELECT payment_type,trade_no FROM sub_adds_recharge_orders WHERE id=$1`, id).Scan(&paymentType, &tradeNo); err != nil {
+			return nil, err
+		}
+		out = append(out, map[string]any{"order_id": id, "event": event, "detail": detail, "created_at": t, "payment_type": paymentType.String, "channel_trade_no": tradeNo.String})
 	}
 	return out, rows.Err()
 }
