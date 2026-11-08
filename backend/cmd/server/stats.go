@@ -29,12 +29,15 @@ type usageSourceStats struct {
 }
 
 type rechargeStats struct {
-	Daily          []recharge.DailyRecharge `json:"daily"`
-	YesterdayTotal float64                  `json:"yesterday_total"`
-	TodayTotal     float64                  `json:"today_total"`
-	Usage          []dailyUsage             `json:"usage"`
-	NewAPI         usageSourceStats         `json:"new_api"`
-	SubAPI         usageSourceStats         `json:"sub_api"`
+	Daily           []recharge.DailyRecharge `json:"daily"`
+	YesterdayTotal  float64                  `json:"yesterday_total"`
+	TodayTotal      float64                  `json:"today_total"`
+	Usage           []dailyUsage             `json:"usage"`
+	NewAPI          usageSourceStats         `json:"new_api"`
+	SubAPI          usageSourceStats         `json:"sub_api"`
+	NewAPIDaily     []recharge.DailyRecharge `json:"new_api_daily"`
+	NewAPIYesterday float64                  `json:"new_api_yesterday_total"`
+	NewAPIToday     float64                  `json:"new_api_today_total"`
 }
 
 func (a *app) enrichAdminOrders(ctx context.Context, orders []recharge.AdminOrder) error {
@@ -55,6 +58,7 @@ func (a *app) rechargeStats(ctx context.Context, authorization string) (recharge
 		return rechargeStats{}, err
 	}
 	stats := rechargeStats{Daily: daily, Usage: make([]dailyUsage, 0, 30)}
+	stats.NewAPIDaily, stats.NewAPIYesterday, stats.NewAPIToday = a.newAPIRecharge(ctx)
 	loc, _ := time.LoadLocation("Asia/Shanghai")
 	if loc == nil {
 		loc = time.FixedZone("Asia/Shanghai", 8*60*60)
@@ -168,6 +172,57 @@ func (a *app) subAPIUsageStats(ctx context.Context) (usageSourceStats, error) {
 		result.TotalAmount += item.TotalAmount
 	}
 	return result, rows.Err()
+}
+
+func (a *app) newAPIRecharge(ctx context.Context) ([]recharge.DailyRecharge, float64, float64) {
+	items := make([]recharge.DailyRecharge, 0, 30)
+	if a.newapiDB == nil {
+		return items, 0, 0
+	}
+	rows, err := a.newapiDB.QueryContext(ctx, `SELECT to_char(to_timestamp(created_at) AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD'), COALESCE(other::jsonb->'admin_info'->>'payment_method',''), COALESCE(sum((substring(content from 'payment amount: ([0-9]+(\\.[0-9]+)?)')::double precision)),0) FROM logs WHERE type=1 AND content LIKE 'Online top-up succeeded%' AND created_at >= extract(epoch FROM now()-interval '30 days') GROUP BY 1,2 ORDER BY 1`)
+	if err != nil {
+		return items, 0, 0
+	}
+	defer rows.Close()
+	byDate := map[string]*recharge.DailyRecharge{}
+	for rows.Next() {
+		var date, paymentType string
+		var amount float64
+		if rows.Scan(&date, &paymentType, &amount) != nil {
+			continue
+		}
+		item := byDate[date]
+		if item == nil {
+			item = &recharge.DailyRecharge{Date: date}
+			byDate[date] = item
+		}
+		if paymentType == "wxpay" {
+			item.Wxpay += amount
+		} else {
+			item.Alipay += amount
+		}
+		item.Total += amount
+	}
+	for _, item := range byDate {
+		items = append(items, *item)
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].Date < items[j].Date })
+	loc, _ := time.LoadLocation("Asia/Shanghai")
+	if loc == nil {
+		loc = time.FixedZone("Asia/Shanghai", 8*60*60)
+	}
+	today := time.Now().In(loc).Format("2006-01-02")
+	yesterday := time.Now().In(loc).AddDate(0, 0, -1).Format("2006-01-02")
+	var yesterdayTotal, todayTotal float64
+	for _, item := range items {
+		if item.Date == yesterday {
+			yesterdayTotal = item.Total
+		}
+		if item.Date == today {
+			todayTotal = item.Total
+		}
+	}
+	return items, yesterdayTotal, todayTotal
 }
 
 type remoteLog struct {
