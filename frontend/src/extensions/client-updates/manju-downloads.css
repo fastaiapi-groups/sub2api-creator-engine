@@ -77,7 +77,7 @@
 .md-download-card h3 { font-size: 25px; margin: 19px 0 2px; letter-spacing: -.5px; font-weight: 650; }
 .md-card-subtitle { margin: 0; color: #687560; font-size: 13px; }
 .md-file-meta { display: flex; align-items: center; gap: 9px; margin: 20px 0 18px; color: #74806a; font-size: 11px; }
-.md-file-meta > span + span::before { content: "·"; margin-right: 9px; color: #b3baad; }
+.md-file-meta > span + span::before { content: ""; display: inline-block; width: 2px; height: 2px; margin: 0 9px 3px 0; border-radius: 50%; background: #b3baad; }
 .manju-downloads .md-download-button { width: 100%; justify-content: space-between; color: #fff; background: var(--md-green); padding: 13px 17px; font-size: 13px; border-radius: 7px; }
 .manju-downloads .md-download-button:hover { background: #254e39; box-shadow: 0 5px 14px #21482b21; }
 .md-download-button svg { width: 18px; height: 18px; }
