@@ -31,6 +31,16 @@
 
 首次正式版本 0.2.12：默认可选更新，包含完整安装包及页面包。旧应用没有更新代码，需要先手动覆盖安装一次。
 
+## 公开下载页设计（2026-11-10）
+
+入口仍为 `/fastaiui/downloads/manju`，`frontend/src/extensions/client-updates/ClientReleases.vue` 负责读取公开发布数据，下载页单独放在 `ManjuDownloads.vue` 与 `manju-downloads.css`，发布后台及 Codex++ 下载页保持原组件。
+
+页面采用浅色鼠尾草绿主题、分镜插画、独立系统下载卡片与响应式排版。保留原始官方下载地址和 SHA-256 复制，并对本站已知签名下载路径提供现有 IP 备用线路链接；外部下载地址不改写。完整安装包仍使用 `installer_release`，最新版本说明使用 `release`，页面更新版本不会冒充完整安装包版本。
+
+说明只在显示时按原换行及中文句号/问号/叹号分条，版本号、小数、URL保持原文。全部文字使用 Vue 文本插值，不渲染 HTML，不修改已签名的发布记录或客户端更新清单。桌面与390px手机宽度检查通过，文件校验展开及复制操作实测正常；4项发布页回归与生产构建通过。
+
+仍通过原 `restart.sh --no-pull --service ui --atomic-static` 更新静态页面，保留已发布安装包、更新服务与全部业务容器。这里只发布网页，不增加客户端版本号。
+
 ## 验证
 
 Go `go test ./...`；发布生命周期集成测试仅接受本机 `TEST_DATABASE_URL`，使用临时 schema 并清理。覆盖现有 Codex 离线发布、产品隔离、管理员角色、强制标记/说明签名、撤回和分片重试。前端 `npx vitest run --config vitest.updates.config.ts` 覆盖策略保存后签名以及普通用户访问控制。不要向生产发布伪造的更高版本以测试弹窗。

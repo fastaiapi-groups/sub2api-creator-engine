@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import {ref,onMounted,computed} from 'vue'
 import {apiClient} from '../../api/client'
-type Asset={platform:string;arch:string;name:string;url:string;size_bytes:number;sha256:string}
-type Release={id:number;product_id:string;version:string;channel:string;status:string;notes:string;assets:Asset[];required_targets:string[];options?:{mandatory:boolean;runtime_sha256?:string}}
+import ManjuDownloads from './ManjuDownloads.vue'
+import type {ClientRelease as Release} from './types'
 const admin=window.location.pathname.includes('/admin/')
 const initial=new URLSearchParams(location.search).get('product_id')
 const product=ref(location.pathname.includes('/downloads/manju')||initial==='xiaoxiao-manju'?'xiaoxiao-manju':'fastaiapi-codexplus')
@@ -36,7 +36,8 @@ async function withdraw(){if(!selected.value)return;await work(async()=>{await a
 async function copy(hash:string){try{await navigator.clipboard.writeText(hash);notice.value='SHA-256 已复制'}catch{error.value='复制失败，请手动选择摘要复制'}}
 </script>
 <template>
-<div class="client-release-page">
+<ManjuDownloads v-if="!admin && isManju" :current="current" :downloads="downloads" :loading="loading" :error="error" :notice="notice" @copy="copy" @dismiss="notice=''"/>
+<div v-else class="client-release-page">
  <header><a class="brand" :href="downloadPage"><span>F</span> FastAiApi <small>客户端</small></a><nav><a href="/fastaiui/recharge">充值中心</a><a v-if="admin" :href="downloadPage">下载页面 ↗</a><a v-else href="https://fastaiapi.cloud/help/codex/" target="_blank" rel="noopener noreferrer">帮助手册</a></nav></header>
  <main>
   <section class="hero"><div><span class="eyebrow">FASTAIAPI · {{admin?'RELEASE CENTER':'DESKTOP CLIENT'}}</span><h1>{{admin?'客户端版本发布':'把创作带到你的桌面'}}</h1><p>{{admin?'从草稿到发布，安装包与更新清单统一管理。':(isManju?'笑笑漫剧，从剧本到成片的创作工作台。':'FastAiApi 定制 Codex++，连接模型服务，专注每一次创作。')}}</p></div><span class="version-chip">{{current?'稳定版 '+current.version:'暂未发布正式版本'}}</span></section>
