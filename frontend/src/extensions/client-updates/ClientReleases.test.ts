@@ -2,11 +2,27 @@ import {beforeEach,afterEach,it,expect,vi} from 'vitest'
 import {mount,flushPromises} from '@vue/test-utils'
 import ClientReleases from './ClientReleases.vue'
 import {apiClient} from '../../api/client'
+import androidRelease from './android-release.json'
 vi.mock('../../api/client',()=>({apiClient:{get:vi.fn(),post:vi.fn()}}))
 let wrapper:ReturnType<typeof mount>|undefined
 let release:any
 beforeEach(()=>{vi.clearAllMocks();history.replaceState(null,'','/fastaiui/admin/client-releases?product_id=xiaoxiao-manju');release={id:12,product_id:'xiaoxiao-manju',version:'0.2.12',status:'draft',notes:'已保存说明',assets:[{platform:'renderer',arch:'any',size_bytes:1234}],required_targets:['renderer/any'],options:{mandatory:false}};vi.mocked(apiClient.get).mockImplementation(async(url)=>({data:String(url).includes('/public')?{release:null}:String(url).includes('/access')?{is_admin:true}:[release]}) as any)})
 afterEach(()=>wrapper?.unmount())
+it('shows the verified English Android APK beside the signed desktop release without changing desktop metadata',async()=>{
+ history.replaceState(null,'','/fastaiui/downloads/manju')
+ const desktop={...release,status:'published',assets:[{platform:'macos',arch:'arm64',name:'Manju.dmg',url:'https://downloads.example/Manju.dmg',size_bytes:2048,sha256:'c'.repeat(64)}]}
+ vi.mocked(apiClient.get).mockResolvedValue({data:{release:desktop,installer_release:desktop}} as any)
+ wrapper=mount(ClientReleases);await flushPromises()
+ const card=wrapper.find('.md-android-card')
+ expect(card.text()).toContain('Android 8.0')
+ expect(card.find('.md-download-button').attributes('href')).toBe(androidRelease.url)
+ expect(androidRelease.filename).toMatch(/^[A-Za-z0-9.-]+\.apk$/)
+ expect(androidRelease.sha256).toMatch(/^[a-f0-9]{64}$/)
+ expect(androidRelease.size_bytes).toBeGreaterThan(0)
+ expect(card.text()).toContain(androidRelease.sha256)
+ expect(wrapper.find('.md-download-button').attributes('href')).toBe(desktop.assets[0].url)
+ expect(apiClient.post).not.toHaveBeenCalled()
+})
 it('saves current notes and required policy before signing and only calls the isolated release API',async()=>{
  wrapper=mount(ClientReleases);await flushPromises();await wrapper.find('.release-list button').trigger('click');await flushPromises()
  await wrapper.find('.editor textarea').setValue('最新更新说明');await wrapper.find('.editor input[type=checkbox]').setValue(true)

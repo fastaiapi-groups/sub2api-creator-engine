@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted } from 'vue'
 import type { ClientAsset, ClientRelease } from './types'
 import './manju-downloads.css'
+import androidRelease from './android-release.json'
 
 const props = defineProps<{
   current: ClientRelease | null
@@ -59,7 +60,7 @@ function alternateDownload(value: string): string {
     <main class="md-main">
       <section class="md-hero" aria-labelledby="download-title">
         <div class="md-hero-copy">
-          <span class="md-eyebrow"><span class="md-dot"></span> 笑笑漫剧 · 桌面创作工作台</span>
+          <span class="md-eyebrow"><span class="md-dot"></span> 笑笑漫剧 · AI 影像创作工作台</span>
           <h1 id="download-title">让脑海中的故事，<br><em>成为眼前的影像。</em></h1>
           <p class="md-intro">从一句灵感，到一部作品。<br>在一个工作台里，完成剧本、角色、分镜与视频创作。</p>
           <div class="md-hero-actions">
@@ -69,7 +70,7 @@ function alternateDownload(value: string): string {
           <div class="md-hero-meta">
             <span v-if="current" class="md-version-pill"><span class="md-dot"></span> v{{ current.version }} 稳定版</span>
             <span v-else>{{ loading ? '正在获取最新版本' : '等待正式版本发布' }}</span>
-            <span>为 macOS 与 Windows 打造</span>
+            <span>支持 macOS、Windows 与 Android</span>
           </div>
         </div>
 
@@ -103,7 +104,7 @@ function alternateDownload(value: string): string {
         </div>
         <p v-if="loading" class="md-state" role="status">正在获取最新安装包…</p>
         <div v-if="error" class="md-state md-error" role="alert"><strong>{{ installers.length ? '操作未完成' : '暂时无法读取版本信息' }}</strong><p>{{ error }}</p><p v-if="!installers.length">请稍后刷新页面重试。</p></div>
-        <div v-if="installers.length" class="md-download-grid">
+        <div v-if="installers.length || androidRelease.published" class="md-download-grid">
           <article v-for="asset in installers" :key="asset.name" class="md-download-card">
             <div class="md-card-top">
               <span class="md-platform-icon" :class="{ 'md-windows-icon': asset.platform === 'windows' }" aria-hidden="true">
@@ -119,9 +120,21 @@ function alternateDownload(value: string): string {
             <div class="md-card-bottom"><span>官方发布 · SHA-256 校验</span><a v-if="alternateDownload(asset.url)" :href="alternateDownload(asset.url)">备用线路下载 <span aria-hidden="true">↗</span></a></div>
             <details class="md-file-check"><summary>查看文件校验信息 <span aria-hidden="true">＋</span></summary><div><code>{{ asset.sha256 }}</code><button type="button" :aria-label="`复制 ${architecture(asset)} SHA-256`" @click="$emit('copy', asset.sha256)">复制 SHA-256</button></div></details>
           </article>
+          <article v-if="androidRelease.published" class="md-download-card md-android-card">
+            <div class="md-card-top">
+              <span class="md-platform-icon" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none"><rect x="8" y="2.5" width="16" height="27" rx="3.5" stroke="currentColor" stroke-width="1.7"/><path d="M13 6h6M14 25h4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>
+              <span class="md-card-version">v{{ androidRelease.version }}</span>
+            </div>
+            <h3>Android</h3>
+            <p class="md-card-subtitle">适用于 Android 8.0 及以上 · 手机与平板</p>
+            <div class="md-file-meta"><span>APK 安装包</span><span>{{ fileSize(androidRelease.size_bytes) }}</span><span>正式版 · 需要联网</span></div>
+            <a class="md-button md-download-button" :href="androidRelease.url" :aria-label="`下载 Android v${androidRelease.version} 安装包`">下载 Android 版 <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M5 17v4h14v-4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+            <div class="md-card-bottom"><span>官方发布 · 覆盖安装保留本机记录</span></div>
+            <details class="md-file-check"><summary>查看文件校验信息 <span aria-hidden="true">＋</span></summary><div><code>{{ androidRelease.sha256 }}</code><button type="button" aria-label="复制 Android SHA-256" @click="$emit('copy', androidRelease.sha256)">复制 SHA-256</button></div></details>
+          </article>
         </div>
         <div v-else-if="!loading && !error" class="md-state"><h3>安装包准备中</h3><p>正式版本发布后，安装包与更新说明将在这里同步展示。</p></div>
-        <p class="md-install-tip"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m10 2 6 2v5c0 4-6 8-6 8S4 13 4 9V4z" stroke="currentColor" stroke-width="1.4"/><path d="m7 9 2 2 4-4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>已有用户请先保存当前项目，再覆盖安装新版。后续更新可在客户端内接收。</p>
+        <p class="md-install-tip"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m10 2 6 2v5c0 4-6 8-6 8S4 13 4 9V4z" stroke="currentColor" stroke-width="1.4"/><path d="m7 9 2 2 4-4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>已有用户请先保存当前项目，再覆盖安装新版。安卓升级请直接覆盖安装，保留应用数据及原图片、视频和项目记录；卸载或清除应用数据前请备份项目与素材。</p>
       </section>
 
       <section v-if="current" id="release-notes" class="md-release-section" aria-labelledby="release-notes-title">
