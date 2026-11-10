@@ -81,6 +81,12 @@
 .manju-downloads .md-download-button { width: 100%; justify-content: space-between; color: #fff; background: var(--md-green); padding: 13px 17px; font-size: 13px; border-radius: 7px; }
 .manju-downloads .md-download-button:hover { background: #254e39; box-shadow: 0 5px 14px #21482b21; }
 .md-download-button svg { width: 18px; height: 18px; }
+.md-android-qr { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin-top: 18px; padding: 14px; background: #f7f9f3; border: 1px solid #e4eadd; border-radius: 10px; }
+.md-android-qr > a { flex: 0 0 160px; display: block; border: 1px solid #e1e7da; border-radius: 8px; background: #fff; overflow: hidden; }
+.md-android-qr img { display: block; width: 160px; height: 160px; }
+.md-android-qr > div { flex: 1 1 130px; }
+.md-android-qr strong { color: #294b37; font-size: 14px; font-weight: 600; }
+.md-android-qr p { margin: 7px 0 0; color: #748269; font-size: 12px; line-height: 1.8; }
 .md-card-bottom { display: flex; gap: 12px; flex-wrap: wrap; justify-content: space-between; align-items: center; margin: 11px 0 19px; font-size: 11px; color: #748269; }
 .md-card-bottom a { color: #77896a; padding: 3px 0; }
 .md-file-check { border-top: 1px solid #edf0e8; color: #6b7b5c; font-size: 11px; }

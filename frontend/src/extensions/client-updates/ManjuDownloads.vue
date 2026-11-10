@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
+import QRCode from 'qrcode'
 import type { ClientAsset, ClientRelease } from './types'
 import './manju-downloads.css'
 import androidRelease from './android-release.json'
@@ -13,7 +14,14 @@ const props = defineProps<{
 }>()
 defineEmits<{ copy: [hash: string]; dismiss: [] }>()
 const previousTitle = document.title
-onMounted(() => { document.title = '笑笑漫剧下载 · FastAiApi' })
+const androidQrCode = ref('')
+onMounted(() => {
+  document.title = '笑笑漫剧下载 · FastAiApi'
+  if (androidRelease.published) void QRCode.toString(androidRelease.url, {
+    type: 'svg', width: 192, margin: 4, errorCorrectionLevel: 'M',
+    color: { dark: '#193b2d', light: '#ffffff' },
+  }).then(svg => { androidQrCode.value = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}` }).catch(() => {})
+})
 onUnmounted(() => { document.title = previousTitle })
 
 const installers = computed(() => props.downloads?.assets.filter(asset => asset.platform !== 'renderer') || [])
@@ -129,6 +137,10 @@ function alternateDownload(value: string): string {
             <p class="md-card-subtitle">适用于 Android 8.0 及以上 · 手机与平板</p>
             <div class="md-file-meta"><span>APK 安装包</span><span>{{ fileSize(androidRelease.size_bytes) }}</span><span>正式版 · 需要联网</span></div>
             <a class="md-button md-download-button" :href="androidRelease.url" :aria-label="`下载 Android v${androidRelease.version} 安装包`">下载 Android 版 <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M5 17v4h14v-4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+            <div v-if="androidQrCode" class="md-android-qr">
+              <a :href="androidRelease.url" aria-label="扫码或点击下载 Android 安装包"><img :src="androidQrCode" width="192" height="192" alt="扫描二维码下载 Android 正式安装包"></a>
+              <div><strong>手机扫码下载</strong><p>使用安卓手机扫码，下载 v{{ androidRelease.version }} 正式安装包。</p></div>
+            </div>
             <div class="md-card-bottom"><span>官方发布 · 覆盖安装保留本机记录</span></div>
             <details class="md-file-check"><summary>查看文件校验信息 <span aria-hidden="true">＋</span></summary><div><code>{{ androidRelease.sha256 }}</code><button type="button" aria-label="复制 Android SHA-256" @click="$emit('copy', androidRelease.sha256)">复制 SHA-256</button></div></details>
           </article>
