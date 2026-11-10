@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, onUnmounted } from 'vue'
 import type { ClientAsset, ClientRelease } from './types'
 import './manju-downloads.css'
 
@@ -11,6 +11,9 @@ const props = defineProps<{
   notice: string
 }>()
 defineEmits<{ copy: [hash: string]; dismiss: [] }>()
+const previousTitle = document.title
+onMounted(() => { document.title = '笑笑漫剧下载 · FastAiApi' })
+onUnmounted(() => { document.title = previousTitle })
 
 const installers = computed(() => props.downloads?.assets.filter(asset => asset.platform !== 'renderer') || [])
 // Published notes are signed. Format their display without rewriting the release.
