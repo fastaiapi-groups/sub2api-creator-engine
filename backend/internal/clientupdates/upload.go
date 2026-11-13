@@ -25,12 +25,14 @@ func (s *Service) UploadChunk(ctx context.Context, releaseID, actor int64, uploa
 	if s.product() != ManjuProduct || !uploadIDPattern.MatchString(uploadID) || offset < 0 || total <= 0 || total > 2<<30 || offset >= total || !filenamePattern.MatchString(name) || (platform == "renderer" && total > 64<<20) {
 		return UploadProgress{}, errors.New("上传分片参数无效")
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	r, err := s.Get(ctx, releaseID)
 	if err != nil {
 		return UploadProgress{}, err
 	}
-	if r.Status != "draft" {
-		return UploadProgress{}, errors.New("只有草稿可以上传")
+	if !s.canEdit(r) {
+		return UploadProgress{}, errors.New("当前版本无法上传文件")
 	}
 	declared := false
 	for _, target := range r.Required {
@@ -109,7 +111,7 @@ func (s *Service) UploadChunk(ctx context.Context, releaseID, actor int64, uploa
 		if err != nil {
 			return UploadProgress{}, err
 		}
-		release, err := s.Upload(ctx, releaseID, actor, platform, arch, name, f)
+		release, err := s.upload(ctx, tx, releaseID, actor, platform, arch, name, f)
 		f.Close()
 		if err != nil {
 			return UploadProgress{}, err

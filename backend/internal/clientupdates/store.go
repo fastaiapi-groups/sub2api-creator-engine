@@ -39,17 +39,18 @@ type ReleaseOptions struct {
 }
 
 type Release struct {
-	ID        int64          `json:"id"`
-	Product   string         `json:"product_id"`
-	Options   ReleaseOptions `json:"options"`
-	Version   string         `json:"version"`
-	Channel   string         `json:"channel"`
-	Notes     string         `json:"notes"`
-	Status    string         `json:"status"`
-	Assets    []Asset        `json:"assets"`
-	Required  []string       `json:"required_targets"`
-	Envelope  *Envelope      `json:"envelope,omitempty"`
-	CreatedAt time.Time      `json:"created_at"`
+	ID          int64          `json:"id"`
+	Product     string         `json:"product_id"`
+	Options     ReleaseOptions `json:"options"`
+	Version     string         `json:"version"`
+	Channel     string         `json:"channel"`
+	Notes       string         `json:"notes"`
+	Status      string         `json:"status"`
+	Assets      []Asset        `json:"assets"`
+	Required    []string       `json:"required_targets"`
+	Envelope    *Envelope      `json:"envelope,omitempty"`
+	CreatedAt   time.Time      `json:"created_at"`
+	PublishedAt *time.Time     `json:"published_at,omitempty"`
 }
 type Service struct {
 	DB         *sql.DB
@@ -89,12 +90,12 @@ func (s *Service) IsAdmin(ctx context.Context, uid int64) bool {
 	return e == nil && ok
 }
 
-const columns = `id,version,channel,notes,status,assets,required_targets,envelope,created_at,product_id,release_options`
+const columns = `id,version,channel,notes,status,assets,required_targets,envelope,created_at,product_id,release_options,published_at`
 
 func scan(row interface{ Scan(...any) error }) (Release, error) {
 	var r Release
 	var assets, required, envelope, options []byte
-	e := row.Scan(&r.ID, &r.Version, &r.Channel, &r.Notes, &r.Status, &assets, &required, &envelope, &r.CreatedAt, &r.Product, &options)
+	e := row.Scan(&r.ID, &r.Version, &r.Channel, &r.Notes, &r.Status, &assets, &required, &envelope, &r.CreatedAt, &r.Product, &options, &r.PublishedAt)
 	if e != nil {
 		return r, e
 	}
@@ -146,38 +147,63 @@ func (s *Service) EditOptions(ctx context.Context, id, uid int64, notes string, 
 	if s.product() != ManjuProduct || len(notes) > 16000 {
 		return Release{}, errors.New("发布说明无效")
 	}
-	r, err := s.Get(ctx, id)
-	if err != nil {
-		return r, err
-	}
-	if r.Status != "draft" {
-		return r, errors.New("只有草稿可以修改发布说明和更新策略")
-	}
-	r.Options.Mandatory = mandatory
-	options, err := json.Marshal(r.Options)
-	if err != nil {
-		return r, err
-	}
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
-		return r, err
+		return Release{}, err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `UPDATE client_releases SET notes=$1,release_options=$2,envelope=NULL WHERE id=$3 AND product_id=$4 AND status='draft'`, notes, options, id, s.product())
+	r, err := s.lockRelease(ctx, tx, id)
 	if err != nil {
 		return r, err
 	}
-	if n, _ := result.RowsAffected(); n != 1 {
-		return r, errors.New("草稿状态已改变")
+	if !s.canEdit(r) {
+		return r, errors.New("只有草稿和笑笑漫剧已发布版本可以修改")
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO client_release_audits(release_id,actor,action) VALUES($1,$2,'edit')`, id, uid); err != nil {
+	r.Notes = notes
+	r.Options.Mandatory = mandatory
+	r, err = s.saveChanges(ctx, tx, r, uid, "edit")
+	if err != nil {
 		return r, err
 	}
-	if err = tx.Commit(); err != nil {
-		return r, err
-	}
-	return s.Get(ctx, id)
+	return r, tx.Commit()
 }
+
+func (s *Service) canEdit(r Release) bool {
+	return r.Status == "draft" || (r.Status == "published" && s.product() == ManjuProduct)
+}
+
+func (s *Service) lockRelease(ctx context.Context, tx *sql.Tx, id int64) (Release, error) {
+	return scan(tx.QueryRowContext(ctx, `SELECT `+columns+` FROM client_releases WHERE id=$1 AND product_id=$2 FOR UPDATE`, id, s.product()))
+}
+
+func (s *Service) saveChanges(ctx context.Context, tx *sql.Tx, r Release, uid int64, action string) (Release, error) {
+	var envelope []byte
+	r.Envelope = nil
+	if r.Status == "published" {
+		signed, err := s.signRelease(r)
+		if err != nil {
+			return r, err
+		}
+		manifest, err := VerifyProduct(signed, s.Public, s.product())
+		if err != nil {
+			return r, err
+		}
+		if err = matches(r, manifest); err != nil {
+			return r, err
+		}
+		envelope, _ = json.Marshal(signed)
+		r.Envelope = &signed
+	}
+	options, _ := json.Marshal(r.Options)
+	assets, _ := json.Marshal(r.Assets)
+	_, err := tx.ExecContext(ctx, `UPDATE client_releases SET notes=$1,release_options=$2,assets=$3,envelope=$4 WHERE id=$5 AND product_id=$6`, r.Notes, options, assets, envelope, r.ID, s.product())
+	if err != nil {
+		return r, err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO client_release_audits(release_id,actor,action) VALUES($1,$2,$3)`, r.ID, uid, action)
+	return r, err
+}
+
 func (s *Service) Create(ctx context.Context, uid int64, version, notes string, required []string) (Release, error) {
 	return s.CreateWithOptions(ctx, uid, version, notes, required, ReleaseOptions{})
 }
@@ -202,12 +228,25 @@ func (s *Service) CreateWithOptions(ctx context.Context, uid int64, version, not
 func (s *Service) Upload(ctx context.Context, id, uid int64, platform, arch, name string, reader io.Reader) (Release, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	r, e := s.Get(ctx, id)
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return Release{}, err
+	}
+	defer tx.Rollback()
+	r, err := s.upload(ctx, tx, id, uid, platform, arch, name, reader)
+	if err != nil {
+		return r, err
+	}
+	return r, tx.Commit()
+}
+
+func (s *Service) upload(ctx context.Context, tx *sql.Tx, id, uid int64, platform, arch, name string, reader io.Reader) (Release, error) {
+	r, e := scan(tx.QueryRowContext(ctx, `SELECT `+columns+` FROM client_releases WHERE id=$1 AND product_id=$2`, id, s.product()))
 	if e != nil {
 		return r, e
 	}
-	if r.Status != "draft" {
-		return r, errors.New("仅草稿允许上传")
+	if !s.canEdit(r) {
+		return r, errors.New("当前版本无法上传文件")
 	}
 	a := Asset{Platform: platform, Arch: arch, Name: name, Size: 1, SHA256: strings.Repeat("0", 64)}
 	a.URL = ProductAssetURL(s.product(), r.Version, a.SHA256, name)
@@ -248,8 +287,9 @@ func (s *Service) Upload(ctx context.Context, id, uid int64, platform, arch, nam
 	a.Size = n
 	a.SHA256 = hex.EncodeToString(h.Sum(nil))
 	a.URL = ProductAssetURL(s.product(), r.Version, a.SHA256, a.Name)
+	runtimeHash := ""
 	if platform == "renderer" {
-		r.Options.RuntimeHash, e = inspectRendererBundle(tmp, r.Version)
+		runtimeHash, e = inspectRendererBundle(tmp, r.Version)
 		if e != nil {
 			return r, e
 		}
@@ -268,29 +308,30 @@ func (s *Service) Upload(ctx context.Context, id, uid int64, platform, arch, nam
 	if e != nil {
 		return r, e
 	}
-	b, _ := json.Marshal([]Asset{a})
-	runtimeHash := ""
-	if platform == "renderer" {
-		runtimeHash = r.Options.RuntimeHash
-	}
-	// Merge the one target in SQL so two uploader processes cannot overwrite
-	// another platform's file or a concurrently edited mandatory policy.
-	result, e := s.DB.ExecContext(ctx, `UPDATE client_releases SET
- assets=COALESCE((SELECT jsonb_agg(asset) FROM jsonb_array_elements(assets) asset WHERE NOT (asset->>'platform'=$2 AND asset->>'arch'=$3)),'[]'::jsonb)||$1::jsonb,
- envelope=NULL,release_options=CASE WHEN $6<>'' THEN jsonb_set(release_options,'{runtime_sha256}',to_jsonb($6::text),true) ELSE release_options END
- WHERE id=$4 AND product_id=$5 AND status='draft'`, b, platform, arch, id, s.product(), runtimeHash)
+	status := r.Status
+	r, e = s.lockRelease(ctx, tx, id)
 	if e != nil {
 		return r, e
 	}
-	if n, _ := result.RowsAffected(); n != 1 {
-		return r, errors.New("草稿状态已改变")
+	if r.Status != status {
+		return r, errors.New("版本状态已改变，请重新上传")
 	}
-	_, e = s.DB.ExecContext(ctx, `INSERT INTO client_release_audits(release_id,actor,action) VALUES($1,$2,'upload')`, id, uid)
-	if e != nil {
-		return r, e
+	if runtimeHash != "" {
+		if r.Status == "published" && runtimeHash != r.Options.RuntimeHash {
+			return r, errors.New("替换页面包必须使用相同的桌面运行环境；桌面环境有变化时请发布新版本")
+		}
+		r.Options.RuntimeHash = runtimeHash
 	}
-	return s.Get(ctx, id)
+	for i, existing := range r.Assets {
+		if existing.Platform == platform && existing.Arch == arch {
+			r.Assets[i] = a
+			return s.saveChanges(ctx, tx, r, uid, "upload")
+		}
+	}
+	r.Assets = append(r.Assets, a)
+	return s.saveChanges(ctx, tx, r, uid, "upload")
 }
+
 func (s *Service) verifyFile(a Asset) error {
 	f, e := os.Open(filepath.Join(s.Root, "objects", a.SHA256, a.Name))
 	if e != nil {
@@ -512,16 +553,24 @@ func (s *Service) Download(ctx context.Context, version, hash, name string) (str
 
 // Only this independent product uses server-side signing; Codex++ remains offline-signed.
 func (s *Service) Prepare(ctx context.Context, id, uid int64) (Release, error) {
+	r, err := s.Get(ctx, id)
+	if err != nil {
+		return r, err
+	}
+	signed, err := s.signRelease(r)
+	if err != nil {
+		return r, err
+	}
+	return s.Validate(ctx, id, uid, signed)
+}
+
+func (s *Service) signRelease(r Release) (Envelope, error) {
 	if s.product() != ManjuProduct || len(s.SigningKey) != ed25519.PrivateKeySize {
-		return Release{}, errors.New("该产品未配置后台发布签名")
+		return Envelope{}, errors.New("该产品未配置后台发布签名")
 	}
-	r, e := s.Get(ctx, id)
-	if e != nil {
-		return r, e
+	data, err := json.Marshal(DraftManifest(r))
+	if err != nil {
+		return Envelope{}, err
 	}
-	data, e := json.Marshal(DraftManifest(r))
-	if e != nil {
-		return r, e
-	}
-	return s.Validate(ctx, id, uid, Envelope{Manifest: base64.StdEncoding.EncodeToString(data), Signature: base64.StdEncoding.EncodeToString(ed25519.Sign(s.SigningKey, data)), KeyID: ManjuKeyID})
+	return Envelope{Manifest: base64.StdEncoding.EncodeToString(data), Signature: base64.StdEncoding.EncodeToString(ed25519.Sign(s.SigningKey, data)), KeyID: ManjuKeyID}, nil
 }

@@ -149,8 +149,17 @@ func TestManjuReleaseLifecycleAndProductIsolation(t *testing.T) {
 	if _, err = codex.Current(ctx); err != sql.ErrNoRows {
 		t.Fatal("Manju publication changed the Codex channel")
 	}
-	if _, err = manju.EditOptions(ctx, r.ID, 7, "rewrite", false); err == nil {
-		t.Fatal("published signed policy could be changed")
+	revised, err := manju.EditOptions(ctx, r.ID, 7, "修订说明", false)
+	if err != nil || revised.PublishedAt == nil || current.PublishedAt == nil || !revised.PublishedAt.Equal(*current.PublishedAt) {
+		t.Fatal("published policy edit changed the original publication time", err)
+	}
+	current, err = manju.Current(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err = VerifyProduct(*current.Envelope, public, ManjuProduct)
+	if err != nil || m.Mandatory || m.Notes != "修订说明" || m.Sequence != r.ID {
+		t.Fatalf("public check did not return the revised signed policy: %v", err)
 	}
 	file, err := manju.Download(ctx, r.Version, r.Assets[0].SHA256, r.Assets[0].Name)
 	if err != nil {
@@ -226,6 +235,28 @@ func TestManjuReleaseLifecycleAndProductIsolation(t *testing.T) {
 	installer, err := manju.InstallerRelease(ctx)
 	if err != nil || installer.ID != r.ID {
 		t.Fatal("download page did not select the latest complete installer", err)
+	}
+	replacement := []byte("MZ revised installer")
+	replacementID := fmt.Sprintf("%032x", 3)
+	progress, err = manju.UploadChunk(ctx, r.ID, 7, replacementID, "windows", "x64", "Manju-setup.exe", 0, int64(len(replacement)), bytes.NewReader(replacement))
+	if err != nil || !progress.Complete {
+		t.Fatal("published installer could not be replaced", err)
+	}
+	latest, err := manju.InstallerRelease(ctx)
+	if err != nil || latest.PublishedAt == nil || installer.PublishedAt == nil || !latest.PublishedAt.Equal(*installer.PublishedAt) {
+		t.Fatal("installer replacement changed the original publication time", err)
+	}
+	m, err = VerifyProduct(*latest.Envelope, public, ManjuProduct)
+	if err != nil || len(m.Assets) != 1 || m.Assets[0] != latest.Assets[0] || m.Assets[0].SHA256 == r.Assets[0].SHA256 {
+		t.Fatal("installer replacement did not publish the new signed digest", err)
+	}
+	file, err = manju.Download(ctx, latest.Version, m.Assets[0].SHA256, m.Assets[0].Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err = os.ReadFile(file)
+	if err != nil || !bytes.Equal(saved, replacement) {
+		t.Fatal("download did not return the replacement bytes", err)
 	}
 	page, err := manju.Create(ctx, 7, "0.2.15", "页面更新", []string{"renderer/any"})
 	if err != nil {
